@@ -296,8 +296,29 @@ When `Untrace` appears on the left of `Compose`, it slides inward, absorbing the
 right-hand side:
 
 ```
-Untrace p ∘ g = Untrace (p ∘ (g × id_c))
+Untrace p ∘ h = Untrace (p ∘ (h × id_c))
 ```
+
+**What this means operationally:**
+
+In the `run` function, this is the case:
+
+```haskell
+run (Compose (Untrace p) h) = \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
+```
+
+Breaking it down:
+
+1. **Input**: We receive `a`
+2. **Right-hand side absorbed**: First, we run `h` on the input: `run h a`
+3. **Feedback threaded**: We pair the result with the feedback variable `c`: `(run h a, c)`
+4. **Left-hand loop**: Feed this pair into `p`, which produces a new `(b, c)` pair
+5. **Fixed point**: The fixed point finds the value of `c` such that the loop is coherent
+6. **Projection**: Extract just the `b` component with `fst`
+
+The key insight: by inspecting the structure of `Compose`, we can **rearrange** the order 
+of operations. Instead of composing `Untrace p` with `h` as a pipeline, we **absorb** `h` 
+into the feedback loop. Both input and feedback flow through `p` together.
 
 **Proof by parametricity:**
 
@@ -318,6 +339,25 @@ This is the same argument as why `runST` is safe: the state variable `s` is exis
 so it cannot leak. Here, the feedback variable `c` is existential, so it cannot leak.
 
 ∎
+
+### The Base Case: Untrace Without Compose
+
+When `Untrace` stands alone (not part of a `Compose`):
+
+```haskell
+run (Untrace p) = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+```
+
+This is simpler: no sliding is needed. We close the loop directly:
+
+1. **Input**: We receive `a`
+2. **Pair with feedback**: Pair it directly with the feedback variable `c`: `(a, c)`
+3. **Run the loop**: Feed this pair into `p`, which produces a new `(b, c)` pair
+4. **Fixed point**: The fixed point finds the value of `c` such that the loop converges
+5. **Projection**: Extract the `b` component with `fst`
+
+The contrast with the sliding case: here, there is no intermediate pipeline `h`. 
+The feedback variable enters at the very top level.
 
 ### The Yanking Axiom
 

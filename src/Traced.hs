@@ -130,10 +130,43 @@ run (Compose g h) = case g of
   Apply f p -> f . run (Compose p h)
   -- If left side is Compose, reassociate leftward
   Compose g1 g2 -> run (Compose g1 (Compose g2 h))
-  -- If left side is Untrace, close the loop (sliding law)
+  -- If left side is Untrace, slide and close the loop
+  --
+  -- This case implements the sliding law: Untrace p ∘ h = Untrace (p ∘ (h × id_c))
+  --
+  -- We have:
+  --   p :: Traced (a, c) (b, c)  — a morphism that threads feedback 'c' alongside
+  --   h :: Traced a b             — a pipeline to the right
+  --
+  -- To produce an a -> b function:
+  -- 1. Take a fixed point over the pair (b, c), where c is the feedback variable
+  -- 2. Given an input 'a', feed it through h first: run h a gives us a b-like result
+  -- 3. Pair that result with the feedback c: (run h a, c)
+  -- 4. Feed the pair into p, which processes it and returns a new (b, c) pair
+  -- 5. Project out just the b component with fst
+  --
+  -- The key insight: by case-inspecting here, we absorb h into the loop. The
+  -- feedback variable c can then thread through both p and h together, staying
+  -- open until the fixed point closes it.
   Untrace p -> \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
   Pure -> run h
+-- Base case: Untrace at the top level
+--
+-- We have:
+--   p :: Traced (a, c) (b, c)  — a morphism that threads feedback 'c' alongside
+--
+-- To produce an a -> b function:
+-- 1. Take a fixed point over the pair (b, c), where c is the feedback variable
+-- 2. Given an input 'a', pair it directly with the feedback: (a, c)
+-- 3. Feed the pair into p, which processes it and returns a new (b, c) pair
+-- 4. Project out just the b component with fst
+--
+-- This is the simple case: no sliding is needed; the loop is closed directly at
+-- this level. The fixed point finds the b value that satisfies the feedback loop.
 run (Untrace p) = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+
+-- (Compose (Untrace p) h) -> \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
+--          (Untrace p)    -> \a -> fst $ fix $ \(_b, c) -> run p (a, c)
 
 -- |
 -- Close a feedback loop by taking the fixed point.
