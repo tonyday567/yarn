@@ -25,6 +25,7 @@ module Traced
     Traced (..)
   , build
   , run
+  , runFree
   , close
   -- * Type aliases for restricted views
   , Coyoneda
@@ -87,22 +88,52 @@ build :: (a -> b) -> Traced a b
 build f = Apply f Pure
 
 -- |
--- Cast Traced syntax back to a function.
+-- Cast Traced syntax back to a function (simple version).
 --
--- * Pure: maps to identity
--- * Apply: flattens to function composition
--- * Compose: joins pipelines
--- * Untrace: closes the loop via fixed point
+-- This is the implementation for 'Free' — restricted to Pure, Apply, Compose.
+-- No case inspection needed; composition flattens immediately.
 --
--- The Untrace case is the sliding law in action: we take a fixed point over
--- the pair (result, feedback), keeping the feedback variable alive and threading it
--- through the composition until the loop is closed.
+-- >>> runFree (build id) == id
+-- True
+
+runFree :: Traced a b -> (a -> b)
+runFree Pure          = id
+runFree (Apply f p)   = f . runFree p
+runFree (Compose g h) = runFree g . runFree h
+runFree (Untrace _)   = error "Untrace cannot appear in Free"
+
+-- |
+-- Cast Traced syntax back to a function (full version with case inspection).
+--
+-- This is the proper Mendler-style normalizer that handles 'Untrace'.
+-- The case inspection serves two purposes:
+--
+-- 1. __Reassociate__ left-nested Compose chains, implementing associativity
+--    definitionally (not as a proof obligation)
+--
+-- 2. __Detect sliding__: when Untrace appears on the left of Compose, the
+--    case inspection triggers the sliding law, absorbing the right-hand side
+--    into the feedback loop and closing it at the right moment.
+--
+-- The operational content of the traced monoidal axioms is compiled into this
+-- normalizer. The loop slides through compositions until it reaches a point
+-- where it can be closed.
+--
+-- >>> run (build id) == id
+-- True
 
 run :: Traced a b -> (a -> b)
-run Pure          = id
-run (Apply f p)   = f . run p
-run (Compose g h) = run g . run h
-run (Untrace p)   = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+run Pure = id
+run (Apply f p) = f . run p
+run (Compose g h) = case g of
+  -- If left side is Apply, extract it and reassociate
+  Apply f p -> f . run (Compose p h)
+  -- If left side is Compose, reassociate leftward
+  Compose g1 g2 -> run (Compose g1 (Compose g2 h))
+  -- If left side is Untrace, close the loop (sliding law)
+  Untrace p -> \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
+  Pure -> run h
+run (Untrace p) = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
 
 -- |
 -- Close a feedback loop by taking the fixed point.

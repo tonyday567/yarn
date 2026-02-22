@@ -165,14 +165,18 @@ build :: (a -> b) -> Free a b
 build f = Apply f Pure
 ```
 
-**run**: Cast the syntax back to a function. When we see `Compose`, we collapse it.
+**run** at the Free level: Cast the syntax back to a function.
+
+At Free level, no case inspection is needed — composition simply flattens to function composition:
 
 ```haskell
-run :: Free a b -> (a -> b)
-run Pure        = id
-run (Apply f p) = f . run p
-run (Compose g h) = run g . run h
+runFree :: Free a b -> (a -> b)
+runFree Pure        = id
+runFree (Apply f p) = f . runFree p
+runFree (Compose g h) = runFree g . runFree h
 ```
+
+This is straightforward: each constructor maps directly to its algebraic counterpart.
 
 ### Category Laws
 
@@ -237,24 +241,54 @@ the key to all the laws.
 
 ### Cast: From Data to Functions
 
-**build**: Cast a function into Traced syntax (same as before).
+**build**: Cast a function into Traced syntax.
 
 ```haskell
 build :: (a -> b) -> Traced a b
 build f = Apply f Pure
 ```
 
-**run**: Cast the syntax back to a function. When we see `Untrace`, we close the loop.
+**run** at the Traced level: Cast the syntax back to a function using **Mendler-style case inspection**.
+
+The implementation changes fundamentally when `Untrace` is available. We cannot simply 
+flatten `Compose` — we must inspect the left side before recursing:
 
 ```haskell
 run :: Traced a b -> (a -> b)
-run Pure          = id
-run (Apply f p)   = f . run p
-run (Compose g h) = run g . run h
-run (Untrace p)   = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+run Pure = id
+run (Apply f p) = f . run p
+run (Compose g h) = case g of
+  -- If left side is Apply, extract and reassociate
+  Apply f p -> f . run (Compose p h)
+  -- If left side is Compose, reassociate leftward
+  Compose g1 g2 -> run (Compose g1 (Compose g2 h))
+  -- If left side is Untrace, slide and close the loop
+  Untrace p -> \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
+  Pure -> run h
+run (Untrace p) = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
 ```
 
-The `Untrace` case takes a fixed point over the pair `(b, c)`. The feedback loop is closed.
+### Implementation Changes: Free to Traced
+
+The shift from Free to Traced forces a complete reimplementation of `run`:
+
+| Level | Implementation | Reason |
+|-------|----------------|--------|
+| **Coyoneda** | Linear recursion | Only `Apply` and `Pure`; no branching needed |
+| **Free** | Linear recursion | `Compose` just flattens; still no branching |
+| **Traced** | **Mendler case inspection** | `Untrace` requires looking inside `Compose` to trigger sliding |
+
+At the Traced level, the case inspection does two things:
+
+1. **Reassociate** left-nested `Compose` chains, implementing associativity definitionally 
+   (not as a proof obligation)
+
+2. **Detect and execute the sliding law**: when `Untrace` appears on the left of `Compose`, 
+   the case inspection triggers the law, absorbing the right-hand side into the feedback 
+   loop and closing it at exactly the right moment.
+
+The operational content of the traced monoidal axioms is compiled into this normalizer. 
+The loop slides through compositions until reaching a point where it can safely be closed.
 
 ### The Sliding Law (Proved by Polymorphism)
 
