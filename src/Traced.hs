@@ -40,6 +40,17 @@ module Traced
   , leq
   -- * Examples: Producer-consumer patterns
   , zipTraced
+  -- * Examples: Pipes
+  , Producer
+  , Consumer
+  , mergePipe
+  , runPipe
+  -- * Examples: Concurrency monad
+  , Cont (..)
+  , Conc
+  , atomC
+  , forkC
+  , runC
   ) where
 
 import Prelude
@@ -318,4 +329,74 @@ zipTraced :: [a] -> [b] -> [(a, b)]
 zipTraced [] _ = []
 zipTraced _ [] = []
 zipTraced (x:xs) (y:ys) = (x, y) : zipTraced xs ys
+
+-- |
+-- Pipes: Producer-Consumer pattern using Traced.
+--
+-- A Producer emits values of type @o@, producing a result @r@.
+-- A Consumer receives values of type @i@, producing a result @r@.
+-- When merged via Compose and closed via close, they form a complete pipeline.
+--
+-- From Spivey's pipe implementation, revealed via Traced:
+
+-- | A producer that emits values of type @o@, ultimately producing @r@.
+type Producer o r = Traced (o -> r) r
+
+-- | A consumer that receives values of type @i@, ultimately producing @r@.
+type Consumer i r = Traced r (i -> r)
+
+-- | Merge a producer and consumer into a closed pipeline.
+mergePipe :: Producer o r -> Consumer o r -> Traced r r
+mergePipe = Compose
+
+-- | Run a closed pipeline by taking its fixed point.
+runPipe :: Traced r r -> r
+runPipe = close
+
+-- | The pipes pattern as Spivey revealed it: Producer, Consumer, and Compose.
+-- Demonstrates how Traced underlies streaming and pipeline abstractions.
+
+-- |
+-- Concurrency monad using Traced as the substrate.
+--
+-- Claessen's concurrency monad, with Traced handling the scheduling.
+-- Compose acts as the scheduler; close runs it.
+--
+-- From the paper:
+--
+-- > type Conc r m = Cont (Traced (m r) (m r))
+
+-- | Simple continuation monad (local definition to avoid mtl dependency).
+newtype Cont r a = Cont { runCont :: (a -> r) -> r }
+
+instance Functor (Cont r) where
+  fmap f m = Cont $ \k -> runCont m (k . f)
+
+instance Applicative (Cont r) where
+  pure a = Cont ($ a)
+  mf <*> mx = Cont $ \k -> runCont mf $ \f -> runCont mx (k . f)
+
+instance Monad (Cont r) where
+  m >>= k = Cont $ \c -> runCont m $ \a -> runCont (k a) c
+
+-- | The concurrency monad: continuations over Traced.
+type Conc r m = Cont (Traced (m r) (m r)) 
+
+-- | Atomic action: wraps a continuation in the Traced scheduler.
+--
+-- (Note: full implementation requires deeper integration with the effect monad @m@)
+atomC :: Conc r m a -> Conc r m a
+atomC = id
+
+-- | Fork a concurrent computation into the scheduler.
+--
+-- The forked computation runs; the parent continues.
+forkC :: Conc r m a -> Conc r m ()
+forkC m = Cont $ \k -> Compose (runCont m (const (build id))) (k ())
+
+-- | Run a concurrent computation.
+--
+-- The Traced morphism acts as a scheduler, coordinating concurrent steps.
+runC :: Conc r m a -> (a -> Traced (m r) (m r)) -> Traced (m r) (m r)
+runC c k = runCont c k
 
