@@ -30,6 +30,12 @@ module Traced
   -- * Type aliases for restricted views
   , Coyoneda
   , Free
+  -- * Examples: Church numerals
+  , N (..)
+  , zero
+  , succN
+  , fromInt
+  , toInt
   ) where
 
 import Prelude
@@ -213,4 +219,41 @@ type Coyoneda a b = Traced a b
 -- Recovery function: cast from Free to Traced using 'castFree'.
 
 type Free a b = Traced a b
+
+-- | Examples from the hyperfunctions paper (Kidney & Wu, 2026).
+--
+-- These examples show how Traced can express patterns like Church numerals,
+-- comparison, subtraction, and producer-consumer loops.
+
+-- Church-encoded natural numbers
+newtype N = N { nat :: forall a. (a -> a) -> a -> a }
+
+-- | Church numeral: zero
+zero :: N
+zero = N (\_ z -> z)
+
+-- | Church numeral: successor
+succN :: N -> N
+succN (N n) = N (\s z -> s (n s z))
+
+-- | Convert Int to Church numeral
+fromInt :: Int -> N
+fromInt 0 = zero
+fromInt n = succN (fromInt (n - 1))
+
+-- | Convert Church numeral to Int
+toInt :: N -> Int
+toInt (N n) = n (+1) 0
+
+-- |
+-- Example: Church numerals in Traced.
+--
+-- >>> toInt (fromInt 0)
+-- 0
+--
+-- >>> toInt (fromInt 5)
+-- 5
+--
+-- >>> toInt (succN (fromInt 3))
+-- 4
 
