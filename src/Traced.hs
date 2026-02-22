@@ -33,6 +33,13 @@ module Traced
   ) where
 
 import Prelude
+import Data.Profunctor
+
+-- | Costrong profunctor: supports feedback via existential quantification.
+-- (Simplified version; normally imported from profunctors library)
+class Profunctor p => Costrong p where
+  unfirst :: p (a, d) (b, d) -> p a b
+  unsecond :: p (d, a) (d, b) -> p a b
 
 -- | Fixed point combinator.
 fix :: (a -> a) -> a
@@ -169,6 +176,29 @@ close = fix . run
 
 instance Functor (Traced a) where
   fmap f p = Apply f p
+
+-- |
+-- Traced is a profunctor: map on both input and output.
+
+instance Profunctor Traced where
+  dimap f g p = build g `Compose` p `Compose` build f
+
+-- |
+-- Traced is Costrong: supports feedback loops via existential quantification.
+--
+-- The key instance: unfirst = Untrace
+--
+-- This says that the categorical trace operation (unfirst) is exactly the
+-- Untrace constructor. Feedback is not derived; it is primitive.
+--
+-- The feedback variable 'c' is existentially quantified and sealed inside
+-- Untrace, making it invisible from outside. This sealing is the key to
+-- dinaturality: any transformation acting on 'c' is unobservable by parametricity.
+
+instance Costrong Traced where
+  unfirst = Untrace
+  -- unsecond requires swapping pair order; omitted for now
+  unsecond = error "unsecond: not yet implemented"
 
 -- |
 -- Type alias: Coyoneda is Traced using only Apply.

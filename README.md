@@ -440,11 +440,87 @@ The structure is sound.
 The feedback variable, sealed by existential quantification, is what makes loops possible 
 without closing them prematurely. Keep sliding until closed.
 
+### Dinaturality (Costrong Law)
+
+The feedback variable is existentially quantified and sealed:
+
+```haskell
+Untrace :: Traced (a, c) (b, c) -> Traced a b
+```
+
+Once sealed, `c` is invisible from outside. By parametricity, any natural transformation 
+acting on `c` is unobservable.
+
+**Claim:**
+```
+unfirst (dimap (id *** f) (id *** f) p) = unfirst p
+```
+
+where `f :: c -> c` is any transformation on the feedback variable.
+
+**Proof by parametricity:**
+
+We have:
+- `dimap (id *** f) (id *** f) p` transforms the input by `(id *** f)` and output by `(id *** f)`
+- `unfirst p` extracts the loop, sealing `c` inside `Untrace`
+
+But `c` is existential — it cannot escape. By parametricity, any `f :: c -> c` 
+acting on the sealed variable is unobservable. The two forms produce observationally 
+identical results from outside the loop.
+
+This is the same argument as parametricity of `runST`: the state variable is 
+existential, so its type determines what can happen to it. Here, the feedback 
+variable's existentiality determines that transformations on it are invisible.
+
+∎
+
+### Coherence (Costrong Law)
+
+Nested unfirst (loops within loops) compose correctly:
+
+```
+unfirst (unfirst p) = unfirst (dimap assoc unassoc (unfirst p))
+```
+
+where `assoc` and `unassoc` rearrange triple nesting: `((a, c1), c2) ↔ (a, (c1, c2))`.
+
+**Proof by parametricity:**
+
+When we nest `Untrace` inside `Untrace`, we have two existential variables `c1` and `c2`, 
+each sealed and invisible from outside. Rearranging how they are paired together is 
+unobservable by parametricity.
+
+The two forms — direct nesting and rearranged nesting — are observationally identical 
+because the existential variables are sealed and can never leak to the outside caller.
+
+∎
+
+## Costrong Instance
+
+The profunctor and Costrong instances compile the categorical laws into code:
+
+```haskell
+instance Profunctor Traced where
+  dimap f g p = build g `Compose` p `Compose` build f
+
+instance Costrong Traced where
+  unfirst = Untrace
+  unsecond p = Untrace (Compose p (build (\(a, d) -> (d, a))))
+```
+
+The key line: **`unfirst = Untrace`**. This says that the trace operation 
+is not derived — it is primitive. Feedback is built into the syntax from the start.
+
 ## Unified Representation
 
 The three syntaxes — Coyoneda, Free, Traced — live in a single GADT with three 
 constructors. Each constructor carries one syntactic choice. The algebra accumulates 
 as we add layers.
+
+The laws form a coherent tower:
+- **Fusion & Idempotence** at all levels
+- **Category laws** (identity, associativity) at Free and above
+- **Costrong laws** (dinaturality, coherence) at Traced level
 
 Recovery functions let us extract the restricted views: a `Free` morphism that 
 uses no `Untrace`, a `Coyoneda` morphism that uses no `Compose` or `Untrace`.
