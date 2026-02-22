@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, RankNTypes, ExistentialQuantification #-}
+{-# LANGUAGE GADTs, RankNTypes, ExistentialQuantification, ExplicitNamespaces #-}
 
 -- |
 -- Module      : Traced
@@ -30,6 +30,8 @@ module Traced
   -- * Type aliases for restricted views
   , Coyoneda
   , Free
+  -- * Bridge to Hyperfunctions
+  , toHyp
   -- * Examples: Church numerals
   , N (..)
   , zero
@@ -53,14 +55,11 @@ module Traced
   , runC
   ) where
 
+import qualified Hyp
+import Hyp (type (↬)(Hyp))
+
 import Prelude
 import Data.Profunctor
-
--- | Costrong profunctor: supports feedback via existential quantification.
--- (Simplified version; normally imported from profunctors library)
-class Profunctor p => Costrong p where
-  unfirst :: p (a, d) (b, d) -> p a b
-  unsecond :: p (d, a) (d, b) -> p a b
 
 -- | Fixed point combinator.
 fix :: (a -> a) -> a
@@ -234,6 +233,22 @@ type Coyoneda a b = Traced a b
 -- Recovery function: cast from Free to Traced using 'castFree'.
 
 type Free a b = Traced a b
+
+-- |
+-- Cast a Traced morphism to a Hyperfunction (initial algebra to final coalgebra).
+--
+-- The bridge between Traced (initial) and Hyp (final) shows they witness
+-- the same traced monoidal structure. Full implementation of Untrace
+-- requires careful handling of the feedback variable via fixed point.
+--
+-- See Kidney & Wu (2026) section 8 for the complete theory.
+-- This is a simplified version working toward the full catamorphism.
+
+toHyp :: Traced a b -> (a ↬ b)
+toHyp Pure = Hyp (\k -> Hyp.ι k (Hyp (\_ -> error "unreachable")))
+toHyp (Apply _f _p) = error "toHyp Apply: not yet fully implemented"
+toHyp (Compose _g _h) = error "toHyp Compose: not yet fully implemented"
+toHyp (Untrace _p) = error "toHyp Untrace: not yet fully implemented"
 
 -- | Examples from the hyperfunctions paper (Kidney & Wu, 2026).
 --

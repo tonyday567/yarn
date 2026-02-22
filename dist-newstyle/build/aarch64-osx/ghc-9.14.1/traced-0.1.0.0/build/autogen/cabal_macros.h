@@ -20,16 +20,46 @@
   (major1) == 4 && (major2) <  22 || \
   (major1) == 4 && (major2) == 22 && (minor) <= 0)
 #endif /* MIN_VERSION_base */
-/* package profunctors-3.3 */
+/* package containers-0.7 */
+#ifndef VERSION_containers
+#define VERSION_containers "0.7"
+#endif /* VERSION_containers */
+#ifndef MIN_VERSION_containers
+#define MIN_VERSION_containers(major1,major2,minor) (\
+  (major1) <  0 || \
+  (major1) == 0 && (major2) <  7 || \
+  (major1) == 0 && (major2) == 7 && (minor) <= 0)
+#endif /* MIN_VERSION_containers */
+/* package mtl-2.3.1 */
+#ifndef VERSION_mtl
+#define VERSION_mtl "2.3.1"
+#endif /* VERSION_mtl */
+#ifndef MIN_VERSION_mtl
+#define MIN_VERSION_mtl(major1,major2,minor) (\
+  (major1) <  2 || \
+  (major1) == 2 && (major2) <  3 || \
+  (major1) == 2 && (major2) == 3 && (minor) <= 1)
+#endif /* MIN_VERSION_mtl */
+/* package profunctors-5.6.3 */
 #ifndef VERSION_profunctors
-#define VERSION_profunctors "3.3"
+#define VERSION_profunctors "5.6.3"
 #endif /* VERSION_profunctors */
 #ifndef MIN_VERSION_profunctors
 #define MIN_VERSION_profunctors(major1,major2,minor) (\
-  (major1) <  3 || \
-  (major1) == 3 && (major2) <  3 || \
-  (major1) == 3 && (major2) == 3 && (minor) <= 0)
+  (major1) <  5 || \
+  (major1) == 5 && (major2) <  6 || \
+  (major1) == 5 && (major2) == 6 && (minor) <= 3)
 #endif /* MIN_VERSION_profunctors */
+/* package these-1.2.1 */
+#ifndef VERSION_these
+#define VERSION_these "1.2.1"
+#endif /* VERSION_these */
+#ifndef MIN_VERSION_these
+#define MIN_VERSION_these(major1,major2,minor) (\
+  (major1) <  1 || \
+  (major1) == 1 && (major2) <  2 || \
+  (major1) == 1 && (major2) == 2 && (minor) <= 1)
+#endif /* MIN_VERSION_these */
 
 /* tool cpphs-1.20.9 */
 #ifndef TOOL_VERSION_cpphs
