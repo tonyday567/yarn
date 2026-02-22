@@ -109,15 +109,19 @@ runFree (Untrace _)   = error "Untrace cannot appear in Free"
 -- The case inspection serves two purposes:
 --
 -- 1. __Reassociate__ left-nested Compose chains, implementing associativity
---    definitionally (not as a proof obligation)
+--    definitionally. When the normalizer sees Compose f g on the left of Compose,
+--    it reassociates to Compose f (Compose g h) before recursing. This proves
+--    associativity not as a law but as structure: both parenthesizations reduce
+--    to identical operations, so they are definitionally equal.
 --
 -- 2. __Detect sliding__: when Untrace appears on the left of Compose, the
 --    case inspection triggers the sliding law, absorbing the right-hand side
---    into the feedback loop and closing it at the right moment.
+--    into the feedback loop via closeLoop. The feedback variable threads through
+--    both p and h together, closing at the right moment.
 --
 -- The operational content of the traced monoidal axioms is compiled into this
--- normalizer. The loop slides through compositions until it reaches a point
--- where it can be closed.
+-- normalizer. Reassociation and sliding are not separate proofs; they are baked
+-- into the case analysis. The normalizer finds the canonical form.
 --
 -- >>> run (build id) == id
 -- True
@@ -128,6 +132,11 @@ run (Apply f p) = f . run p
 run (Compose g h) = case g of
   Pure -> run h
   Apply f p -> f . run (Compose p h)
+  -- Reassociate left-nested Compose (associativity is definitional).
+  -- When g is Compose g1 g2, we have (g1 . g2) . h.
+  -- We normalize to g1 . (g2 . h) before recursing.
+  -- Both parenthesizations reduce to the same function composition,
+  -- so associativity holds by the structure of the normalizer.
   Compose g1 g2 -> run (Compose g1 (Compose g2 h))
   Untrace p -> closeLoop (runFree h) p
   where
