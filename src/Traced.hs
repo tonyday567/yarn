@@ -55,13 +55,25 @@ import Control.Monad.Fix (fix)
 
 data Traced a b where
   Pure    :: Traced a a
-  -- ^ Identity
+  -- ^ Identity: the empty pipeline
   Apply   :: (b -> c) -> Traced a b -> Traced a c
-  -- ^ Defer function application
+  -- ^ Syntax for function application
   Compose :: Traced b c -> Traced a b -> Traced a c
-  -- ^ Defer composition
+  -- ^ Syntax for composition
   Untrace :: Traced (a, c) (b, c) -> Traced a b
-  -- ^ Defer fixed point (feedback loop)
+  -- ^ Syntax for loops: feedback variable 'c' travels alongside.
+  --
+  -- The feedback variable is existentially quantified and sealed inside 'Untrace'.
+  -- Once applied, 'c' is invisible from outside. This sealing is the key to the
+  -- sliding law: by parametricity over the existential, rearrangements of how 'c'
+  -- threads through compositions are unobservable.
+  --
+  -- When 'Untrace' slides left through 'Compose', it absorbs the right-hand side:
+  --
+  -- > Untrace p ∘ g = Untrace (p ∘ (g × id_c))
+  --
+  -- The type system proves this by parametricity: the existential 'c' guarantees
+  -- the two forms are observationally identical.
 
 -- |
 -- Cast a function into Traced syntax.
@@ -74,8 +86,14 @@ build f = Apply f Pure
 -- |
 -- Cast Traced syntax back to a function.
 --
--- Pure maps to identity. Apply flattens to function composition.
--- Compose joins pipelines. Untrace closes loops via fixed point.
+-- * Pure: maps to identity
+-- * Apply: flattens to function composition
+-- * Compose: joins pipelines
+-- * Untrace: closes the loop via fixed point
+--
+-- The Untrace case is the sliding law in action: we take a fixed point over
+-- the pair (result, feedback), keeping the feedback variable alive and threading it
+-- through the composition until the loop is closed.
 
 run :: Traced a b -> (a -> b)
 run Pure          = id
@@ -86,7 +104,13 @@ run (Untrace p)   = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
 -- |
 -- Run a closed loop by taking the fixed point.
 --
--- Not used at Free/Coyoneda level, but essential for Traced.
+-- When the input and output types match, 'yank' closes the loop by taking the
+-- fixed point of the underlying function. This is the yanking axiom:
+--
+-- > yank (build id) = fix . run . build $ id = fix id = id
+--
+-- Not needed at Coyoneda/Free level. Essential at Traced level for evaluating
+-- closed feedback loops.
 
 yank :: Traced a a -> a
 yank = fix . run

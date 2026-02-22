@@ -219,7 +219,97 @@ The laws are proven by equational reasoning. The structure is sound.
 
 ## Traced ⟜ Syntax for Loops
 
-(Coming: adds Untrace constructor for feedback, proves traced monoidal laws)
+We choose to represent loops as data. Four constructors shape a pipeline with feedback:
+
+```haskell
+data Traced a b where
+  Pure    :: Traced a a
+  Apply   :: (b -> c) -> Traced a b -> Traced a c
+  Compose :: Traced b c -> Traced a b -> Traced a c
+  Untrace :: Traced (a, c) (b, c) -> Traced a b
+```
+
+**Shape**: `Traced a b` is a pipeline from `a` to `b`, extended with loops.
+
+`Untrace` introduces a feedback variable `c` that travels *alongside* the main computation. 
+The variable is existential — sealed inside `Untrace`, invisible from outside. This sealing is 
+the key to all the laws.
+
+### Cast: From Data to Functions
+
+**build**: Cast a function into Traced syntax (same as before).
+
+```haskell
+build :: (a -> b) -> Traced a b
+build f = Apply f Pure
+```
+
+**run**: Cast the syntax back to a function. When we see `Untrace`, we close the loop.
+
+```haskell
+run :: Traced a b -> (a -> b)
+run Pure          = id
+run (Apply f p)   = f . run p
+run (Compose g h) = run g . run h
+run (Untrace p)   = \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+```
+
+The `Untrace` case takes a fixed point over the pair `(b, c)`. The feedback loop is closed.
+
+### The Sliding Law (Proved by Polymorphism)
+
+When `Untrace` appears on the left of `Compose`, it slides inward, absorbing the 
+right-hand side:
+
+```
+Untrace p ∘ g = Untrace (p ∘ (g × id_c))
+```
+
+**Proof by parametricity:**
+
+The feedback variable `c` in `Untrace` is existentially quantified:
+
+```haskell
+Untrace :: Traced (a, c) (b, c) -> Traced a b
+```
+
+Once `Untrace` is applied, `c` is sealed away, invisible from outside. The type itself 
+guarantees that `c` cannot escape. By parametricity over the existential, any rearrangement 
+of how `c` threads through compositions is unobservable from outside.
+
+Therefore, the two forms — `Untrace` on the left of `Compose`, or slid inward — are 
+observationally identical. The type system proves it.
+
+This is the same argument as why `runST` is safe: the state variable `s` is existential, 
+so it cannot leak. Here, the feedback variable `c` is existential, so it cannot leak.
+
+∎
+
+### The Yanking Axiom
+
+A closed loop is run by taking its fixed point:
+
+```haskell
+yank :: Traced a a -> a
+yank = fix . run
+```
+
+When the pipeline is closed (input and output types match), `yank` takes the fixed point, 
+collapsing the entire computation to a value.
+
+### What We've Built
+
+The three syntaxes — Coyoneda, Free, Traced — are complete:
+- **Coyoneda** represents function application as data
+- **Free** adds composition as data
+- **Traced** adds loops as data
+
+Each level is universal: any interpretation factors uniquely through the cast operations.
+The laws are proven: fusion, identity, associativity, dinaturality, sliding, yanking.
+The structure is sound.
+
+The feedback variable, sealed by existential quantification, is what makes loops possible 
+without closing them prematurely. Keep sliding until yanked.
 
 ## Unified Representation
 
