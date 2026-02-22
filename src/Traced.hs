@@ -313,24 +313,27 @@ leq n m = toInt n <= toInt m
 -- |
 -- Zip using coroutining folds (from Launchbury, Krstic, Sauerwein).
 --
--- The key insight: folds that return continuation-taking functions can interleave.
--- The paper shows that zip can be defined as two independent folds on both branches
--- simultaneously, communicating via continuations.
+-- The paper shows zip definable as two independent folds on both branches
+-- simultaneously, via continuation-based interleaving:
 --
--- From the paper (section 4):
 -- > zip xs ys = (fold xs first [] # fold ys second Nothing) self
 -- > where
 -- >   first x Nothing = []
 -- >   first x (Just (y,xys)) = (x,y) : xys
 -- >   second y xys = Just (y,xys)
 --
--- This requires:
--- - fold to return a continuation-taking function
--- - # to compose continuations (associative, with self as identity)
--- - Mutual recursion to interleave the folds
+-- The fold signature:
+-- > fold [] c n = \k -> n
+-- > fold (x:xs) c n = \k -> c x (k (fold xs c n))
 --
--- Our implementation uses Haskell's standard zip, but the above shows
--- how Traced/hyperfunctions allow dual-fold zip without asymmetry.
+-- expresses control flow: each fold takes a continuation k that accepts
+-- the next fold result, enabling mutual recursion and interleaving.
+--
+-- Expressing this in Haskell requires RankNTypes to quantify polymorphically
+-- over the list type while keeping the result type uniform. The algorithm is
+-- sound and elegant; the typing is the challenge in Haskell's system.
+--
+-- For now, we use standard zip:
 --
 -- >>> zipTraced [1, 2, 3] ['a', 'b', 'c']
 -- [(1,'a'),(2,'b'),(3,'c')]
