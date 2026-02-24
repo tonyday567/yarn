@@ -1,50 +1,22 @@
 cabal-version: 3.0
-name: traced
-version: 0.1.0.0
-license: BSD-3-Clause
-license-file: LICENSE
-copyright: (c) 2026
-category: Control
-author: Anonymous
-maintainer: tonyday567@gmail.com
-synopsis: Free traced monoidal category
-description:
-  Traced is a GADT encoding the free traced monoidal category over
-  Haskell functions. Three constructors defer three operations:
-  Apply (fmap), Compose (composition), Untrace (fixed point).
-  
-  The library proves the tower of free constructions using equational
-  reasoning: Coyoneda (free functor) → Free (free category) → Traced
-  (free traced category). A unified GADT recovers all three levels.
-
-build-type: Simple
-
-tested-with:
-  ghc ==9.14.1
-
-common ghc-options-stanza
-  ghc-options:
-    -Wall
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wpartial-fields
-    -Wredundant-constraints
-
-common ghc2024-stanza
-  default-language: GHC2024
+name:          traced
+version:       0.1.0.0
+synopsis:      Free traced monoidal category over any base category
+license:       BSD-3-Clause
+build-type:    Simple
 
 library
-  import: ghc-options-stanza
-  import: ghc2024-stanza
   hs-source-dirs: src
-  build-depends:
-    base >=4.14 && <5,
-    profunctors,
-    mtl,
-    containers,
-    these,
   exposed-modules:
-    Traced,
     Hyp
+    Traced
+    MealyM
+  build-depends:
+    base       >= 4.18,
+    mtl        >= 2.2,
+    profunctors >= 5.6,
+    transformers >= 0.6
+  default-language:   GHC2021
+  default-extensions:
+    UnicodeSyntax
+  ghc-options: -Wall -Wno-unused-imports -Wno-name-shadowing

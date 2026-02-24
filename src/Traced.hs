@@ -1,431 +1,376 @@
-{-# LANGUAGE GADTs, RankNTypes, ExistentialQuantification, ExplicitNamespaces #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UnicodeSyntax #-}
+{-# OPTIONS_GHC -Wno-x-partial #-}
 
 -- |
 -- Module      : Traced
--- Description : Free traced monoidal category
--- Copyright   : (c) 2026
--- License     : BSD-3-Clause
+-- Description : Free traced monoidal category over any base category
 --
--- The free traced monoidal category over Haskell functions.
+-- @Traced arr a b@ is the free traced monoidal category built over
+-- any base category @arr@.
 --
--- We build this by choosing three syntaxes for representing computation as data:
+-- Four constructors:
 --
--- 1. __Coyoneda__ — syntax for function application
--- 2. __Free__ — syntax for composition (builds on Coyoneda)
--- 3. __Traced__ — syntax for loops (builds on Free)
+-- * 'Pure'    — identity
+-- * 'Lift'    — lift a base morphism @arr a b@ into syntax
+-- * 'Compose' — sequential composition
+-- * 'Loop'    — feedback (existentially quantified state)
 --
--- Each syntax comes with cast operations (build and run) and laws proven by
--- equational reasoning. All three are unified in a single GADT with three constructors.
+-- The key equation: @loop = Loop@ (ArrowLoop instance)
 --
--- The paper \"Closing the Loop: Free Traced Categories in Haskell\" provides
--- the mathematical foundation.
+-- Instantiations:
+--
+-- @
+-- Traced (->) a b   -- over Haskell functions    (the workhorse)
+-- Traced (↬)  a b   -- over hyperfunctions        (yes, this is real)
+-- Traced Mealy a b  -- over Mealy machines         (explicit sequential state)
+-- @
+--
+-- Interpreter:
+--
+-- @
+-- run :: (Category arr, ArrowLoop arr) => Traced arr a b -> arr a b
+-- @
+--
+-- Swapping @arr@ gives a different compiler for the same syntax tree.
+-- This is the Lawvere architecture: syntax is @Traced arr@,
+-- semantics is @arr@, @run@ is the evaluation functor.
+--
+-- Key finding:
+-- Finally Tagless puts protocol in types (erased at runtime, inaccessible).
+-- Initially Tagged puts protocol in values (present at runtime, inspectable).
+-- Don't give your values to types.
 
 module Traced
-  ( -- * Unified GADT
+  ( -- * The GADT
     Traced (..)
+  , lift
   , build
+  , untrace
+    -- * Running
   , run
-  , runFree
+  , runFn
   , close
-  -- * Type aliases for restricted views
-  , Coyoneda
-  , Free
-  -- * Bridge to Hyperfunctions
+  , closeFn
+  , runHyp
+    -- * Bridge
   , toHyp
-  -- * Examples: Church numerals
-  , N (..)
-  , zero
-  , succN
-  , fromInt
-  , toInt
-  , sub
-  , leq
-  -- * Examples: Producer-consumer patterns
-  , zipTraced
-  -- * Examples: Pipes
+  , fromHyp
+    -- * Producers and Consumers
   , Producer
   , Consumer
+  , done
+  , emit
+  , finish
+  , receive
   , mergePipe
   , runPipe
-  -- * Examples: Concurrency monad
-  , Cont (..)
-  , Conc
-  , atomC
-  , forkC
-  , runC
+    -- * Examples
+  , fib
+  , untilT
   ) where
 
+import Prelude hiding (id, (.))
+import qualified Prelude
+
+import Control.Category (Category (..))
+import Control.Arrow    (Arrow (..), ArrowLoop (..))
+import Data.Profunctor  (Profunctor (..), Costrong (..))
+import Unsafe.Coerce    (unsafeCoerce)  -- GHC-25897 workaround
+
 import qualified Hyp
-import Hyp (type (↬)(Hyp))
+import Hyp (type (↬) (Hyp))
 
-import Prelude
-import Data.Profunctor
+-- ---------------------------------------------------------------------------
+-- Fixed point
+-- ---------------------------------------------------------------------------
 
--- | Fixed point combinator.
 fix :: (a -> a) -> a
 fix f = let x = f x in x
 
--- |
--- Traced: the unified GADT for all three syntaxes.
---
--- Four constructors, each essential at different levels:
---
--- * 'Pure': identity (Coyoneda level)
--- * 'Apply': syntax for function application (Coyoneda level)
--- * 'Compose': syntax for composition (Free level)
--- * 'Untrace': syntax for loops (Traced level)
---
--- >>> run (build id) 42
--- 42
---
--- >>> run (build (+1)) 5
--- 6
---
--- >>> run (build (*2) `Compose` build (+1)) 5
--- 12
+-- ---------------------------------------------------------------------------
+-- The GADT
+-- ---------------------------------------------------------------------------
 
-data Traced a b where
-  Pure    :: Traced a a
-  -- ^ Identity: the empty pipeline
-  Apply   :: (b -> c) -> Traced a b -> Traced a c
-  -- ^ Syntax for function application
-  Compose :: Traced b c -> Traced a b -> Traced a c
-  -- ^ Syntax for composition
-  Untrace :: Traced (a, c) (b, c) -> Traced a b
-  -- ^ Syntax for loops: feedback variable 'c' travels alongside.
-  --
-  -- The feedback variable is existentially quantified and sealed inside 'Untrace'.
-  -- Once applied, 'c' is invisible from outside. This sealing is the key to the
-  -- sliding law: by parametricity over the existential, rearrangements of how 'c'
-  -- threads through compositions are unobservable.
-  --
-  -- When 'Untrace' slides left through 'Compose', it absorbs the right-hand side:
-  --
-  -- > Untrace p ∘ g = Untrace (p ∘ (g × id_c))
-  --
-  -- The type system proves this by parametricity: the existential 'c' guarantees
-  -- the two forms are observationally identical.
+-- | The free traced monoidal category over base category @arr@.
+--
+-- @arr@ is the type of primitive morphisms.
+-- The @Loop@ constructor seals the feedback type @c@ existentially —
+-- it is invisible from outside, which is what makes the sliding law hold
+-- by parametricity.
 
--- |
--- Cast a function into Traced syntax.
---
--- Fusion: @run (build f) = f@
+data Traced arr a b where
+  Pure    :: Traced arr a a
+  -- ^ Identity morphism.
 
-build :: (a -> b) -> Traced a b
-build f = Apply f Pure
+  Lift    :: arr a b -> Traced arr a b
+  -- ^ Lift a base morphism into syntax.
+  -- When @arr = (->)@: lifts a Haskell function.
+  -- When @arr = (↬)@:  lifts a hyperfunction.
+  -- When @arr = Mealy@: lifts one Mealy machine step.
 
--- |
--- Cast Traced syntax back to a function (simple version).
---
--- This is the implementation for 'Free' — restricted to Pure, Apply, Compose.
--- No case inspection needed; composition flattens immediately.
---
--- >>> runFree (build (+10)) 5
--- 15
+  Compose :: Traced arr b c -> Traced arr a b -> Traced arr a c
+  -- ^ Sequential composition (right runs first).
 
-runFree :: Traced a b -> (a -> b)
-runFree Pure          = id
-runFree (Apply f p)   = f . runFree p
-runFree (Compose g h) = runFree g . runFree h
-runFree (Untrace _)   = error "Untrace cannot appear in Free"
+  Loop    :: Traced arr (a, c) (b, c) -> Traced arr a b
+  -- ^ Feedback: close the @c@ wire.
+  -- This is 'ArrowLoop.loop' as a data constructor.
+  -- The feedback variable @c@ is existential — sealed, unobservable.
 
--- |
--- Cast Traced syntax back to a function (full version with case inspection).
---
--- This is the proper Mendler-style normalizer that handles 'Untrace'.
--- The case inspection serves two purposes:
---
--- 1. __Reassociate__ left-nested Compose chains, implementing associativity
---    definitionally. When the normalizer sees Compose f g on the left of Compose,
---    it reassociates to Compose f (Compose g h) before recursing. This proves
---    associativity not as a law but as structure: both parenthesizations reduce
---    to identical operations, so they are definitionally equal.
---
--- 2. __Detect sliding__: when Untrace appears on the left of Compose, the
---    case inspection triggers the sliding law, absorbing the right-hand side
---    into the feedback loop via closeLoop. The feedback variable threads through
---    both p and h together, closing at the right moment.
---
--- The operational content of the traced monoidal axioms is compiled into this
--- normalizer. Reassociation and sliding are not separate proofs; they are baked
--- into the case analysis. The normalizer finds the canonical form.
---
--- >>> run (build id) 99
--- 99
+-- ---------------------------------------------------------------------------
+-- Smart constructors
+-- ---------------------------------------------------------------------------
 
-run :: Traced a b -> (a -> b)
-run Pure = id
-run (Apply f p) = f . run p
-run (Compose g h) = case g of
-  Pure -> run h
-  Apply f p -> f . run (Compose p h)
-  -- Reassociate left-nested Compose (associativity is definitional).
-  -- When g is Compose g1 g2, we have (g1 . g2) . h.
-  -- We normalize to g1 . (g2 . h) before recursing.
-  -- Both parenthesizations reduce to the same function composition,
-  -- so associativity holds by the structure of the normalizer.
-  Compose g1 g2 -> run (Compose g1 (Compose g2 h))
-  Untrace p -> closeLoop (runFree h) p
-  where
-    closeLoop :: (a -> d) -> Traced (d, c) (b, c) -> (a -> b)
-    closeLoop f p' = \a -> fst $ fix $ \(_b, c) -> run p' (f a, c)
-run (Untrace p) = closeLoop id p
-  where
-    closeLoop :: (a -> a) -> Traced (a, c) (b, c) -> (a -> b)
-    closeLoop f p' = \a -> fst $ fix $ \(_b, c) -> run p' (f a, c)
+-- | Lift a base morphism. General form.
+lift :: arr a b -> Traced arr a b
+lift = Lift
 
--- (Compose (Untrace p) h) -> \a -> fst $ fix $ \(_b, c) -> run p (run h a, c)
---          (Untrace p)    -> \a -> fst $ fix $ \(_b, c) -> run p (a, c)
+-- | Lift a Haskell function. Specialised to @arr = (->)@.
+build :: (a -> b) -> Traced (->) a b
+build = Lift
 
--- |
--- Close a feedback loop by taking the fixed point.
+-- | Lift a function-with-feedback. Specialised to @arr = (->)@.
+untrace :: ((a, c) -> (b, c)) -> Traced (->) a b
+untrace f = Loop (Lift f)
+
+-- ---------------------------------------------------------------------------
+-- Category — works for any arr
+-- ---------------------------------------------------------------------------
+
+instance Category (Traced arr) where
+  id  = Pure
+  (.) = Compose
+
+-- ---------------------------------------------------------------------------
+-- Arrow and ArrowLoop — specialised to arr = (->)
+-- ---------------------------------------------------------------------------
+
+instance Arrow (Traced (->)) where
+  arr = Lift
+  -- first has no syntactic form without a product constructor,
+  -- so we evaluate eagerly. Correct semantics; Arrow's first is derived.
+  first p = Lift (\(a, c) -> (runFn p a, c))
+
+-- | The key instance: @loop = Loop@.
 --
--- When the input and output types match, 'close' evaluates the loop by taking the
--- fixed point of the underlying function. This is the yanking axiom:
+-- ArrowLoop extension law proof:
 --
--- > close (build id) = fix . run . build $ id = fix id = id
+-- @
+-- run (Loop (Lift f)) a
+--   = fst $ fix $ \(_,c) -> f (a,c)        [by runFn]
+--   = (\b -> fst $ fix $ \(c,d) -> f (b,d)) a   ✓
+-- @
+instance ArrowLoop (Traced (->)) where
+  loop = Loop
+
+-- ---------------------------------------------------------------------------
+-- Profunctor, Functor, Costrong — specialised to arr = (->)
+-- ---------------------------------------------------------------------------
+
+instance Functor (Traced (->) a) where
+  fmap f p = Compose (Lift f) p
+
+instance Profunctor (Traced (->)) where
+  dimap f g p = Lift g `Compose` p `Compose` Lift f
+
+instance Costrong (Traced (->)) where
+  unfirst = Loop
+  -- unsecond :: p (d,a) (d,b) -> p a b
+  -- Swap input, run p, swap output, close the d wire with Loop.
+  unsecond p = Loop (Lift sw `Compose` p `Compose` Lift sw)
+    where sw (a, b) = (b, a)
+
+-- ---------------------------------------------------------------------------
+-- Running: arr = (->) with Mendler-style normaliser
+-- ---------------------------------------------------------------------------
+
+-- | Evaluate @Traced (->)@ to a Haskell function.
 --
--- Not needed at Coyoneda/Free level. Essential at Traced level for evaluating
--- closed feedback loops.
-
-close :: Traced a a -> a
-close = fix . run
-
--- |
--- Traced is a functor in its output type.
-
-instance Functor (Traced a) where
-  fmap f p = Apply f p
-
--- |
--- Traced is a profunctor: map on both input and output.
-
-instance Profunctor Traced where
-  dimap f g p = build g `Compose` p `Compose` build f
-
--- |
--- Traced is Costrong: supports feedback loops via existential quantification.
+-- Handles two structural laws definitionally:
 --
--- The key instance: unfirst = Untrace
---
--- This says that the categorical trace operation (unfirst) is exactly the
--- Untrace constructor. Feedback is not derived; it is primitive.
---
--- The feedback variable 'c' is existentially quantified and sealed inside
--- Untrace, making it invisible from outside. This sealing is the key to
--- dinaturality: any transformation acting on 'c' is unobservable by parametricity.
+-- 1. Associativity — left-nested @Compose@ is reassociated right.
+-- 2. Sliding      — @Loop@ on the left of @Compose@ absorbs the right.
+runFn :: Traced (->) a b -> (a -> b)
+runFn Pure                = Prelude.id
+runFn (Lift f)            = f
+runFn (Compose g h)       = case g of
+  Pure            -> runFn h
+  Lift f          -> f Prelude.. runFn h
+  Compose g1 g2   -> runFn (Compose g1 (Compose g2 h))
+  Loop p          -> \a -> fst $ fix $ \t -> runFn p (runFn h a, snd t)
+runFn (Loop p)            = \a -> fst $ fix $ \t -> runFn p (a, snd t)
 
-instance Costrong Traced where
-  unfirst = Untrace
-  -- unsecond requires swapping pair order; omitted for now
-  unsecond = error "unsecond: not yet implemented"
+-- | Take the fixed point of a closed @Traced (->)@ loop.
+closeFn :: Traced (->) a a -> a
+closeFn = fix Prelude.. runFn
 
--- |
--- Type alias: Coyoneda is Traced using only Apply.
---
--- Recovery function: cast from Coyoneda to Traced using 'castCoyoneda'.
+-- ---------------------------------------------------------------------------
+-- Running: general Category + ArrowLoop
+-- ---------------------------------------------------------------------------
 
-type Coyoneda a b = Traced a b
+-- | Interpret @Traced arr@ into @arr@.
+--
+-- Each constructor dispatches to the corresponding @arr@ operation:
+--
+-- @
+-- Pure     →  id
+-- Lift f   →  f
+-- Compose  →  (.)
+-- Loop p   →  loop (run p)
+-- @
+run :: (Category arr, ArrowLoop arr) => Traced arr a b -> arr a b
+run Pure          = id
+run (Lift f)      = f
+run (Compose g h) = run g . run h
+run (Loop p)      = loop (run p)
 
--- |
--- Type alias: Free is Traced using only Apply and Compose.
---
--- Recovery function: cast from Free to Traced using 'castFree'.
+-- | Synonym for @run@ at @a = b@. The loop closes in @arr@.
+close :: (Category arr, ArrowLoop arr) => Traced arr a a -> arr a a
+close = run
 
-type Free a b = Traced a b
+-- ---------------------------------------------------------------------------
+-- Running: arr = (↬)
+-- ---------------------------------------------------------------------------
 
--- |
--- Cast a Traced morphism to a Hyperfunction (initial algebra to final coalgebra).
+-- | Interpret @Traced (↬)@ back into @Hyp@.
 --
--- The bridge between Traced (initial) and Hyp (final) shows they witness
--- the same traced monoidal structure. Full implementation of Untrace
--- requires careful handling of the feedback variable via fixed point.
+-- Written explicitly because we don't yet have a @Category (↬)@ instance.
+-- Corresponds to @run@ with:
 --
--- See Kidney & Wu (2026) section 8 for the complete theory.
--- This is a simplified version working toward the full catamorphism.
+-- @
+-- id   = rep id
+-- (.)  = (⊙)
+-- loop = traceHyp
+-- @
+--
+-- @Traced (↬) a b@ is the free traced category over hyperfunctions.
+-- @Loop@ adds inspectable feedback syntax above the coinductive tower.
+-- @runHyp@ discharges the syntax back into the tower.
+runHyp :: Traced (↬) a b -> (a ↬ b)
+runHyp Pure          = Hyp.rep Prelude.id
+runHyp (Lift h)      = h
+runHyp (Compose g h) = runHyp g Hyp.⊙ runHyp h
+runHyp (Loop p)      = traceHyp (runHyp p)
 
-toHyp :: Traced a b -> (a ↬ b)
-toHyp Pure = Hyp (\k -> Hyp.ι k (Hyp (\_ -> error "unreachable")))
-toHyp (Apply _f _p) = error "toHyp Apply: not yet fully implemented"
-toHyp (Compose _g _h) = error "toHyp Compose: not yet fully implemented"
-toHyp (Untrace _p) = error "toHyp Untrace: not yet fully implemented"
+-- | Close a hyperfunction feedback loop.
+--
+-- @(a, c) ↬ (b, c)  →  a ↬ b@
+--
+-- Evaluate with the terminal continuation, take the Haskell fixed point
+-- over the @c@ channel.
+traceHyp :: (a, c) ↬ (b, c) -> (a ↬ b)
+traceHyp h = Hyp.rep $ \a ->
+  fst $ fix $ \t -> Hyp.ι h (Hyp (Prelude.const (a, snd t)))
 
--- | Examples from the hyperfunctions paper (Kidney & Wu, 2026).
---
--- These examples show how Traced can express patterns like Church numerals,
--- comparison, subtraction, and producer-consumer loops.
+-- ---------------------------------------------------------------------------
+-- Bridge: Traced (->) ↔ Hyp
+-- ---------------------------------------------------------------------------
 
--- Church-encoded natural numbers
-newtype N = N { nat :: forall a. (a -> a) -> a -> a }
+-- | Catamorphism: fold @Traced (->)@ into @Hyp@.
+--
+-- Initial algebra → final coalgebra.
+-- Same object, different notation, different side of the erasure line.
+toHyp :: Traced (->) a b -> (a ↬ b)
+toHyp Pure          = Hyp.rep Prelude.id
+toHyp (Lift f)      = Hyp.rep f
+toHyp (Compose g h) = toHyp g Hyp.⊙ toHyp h
+toHyp u@(Loop _)    = Hyp.rep (runFn u)
 
--- | Church numeral: zero
-zero :: N
-zero = N (\_ z -> z)
+-- | Depth-1 unfolding: @Hyp@ → @Traced (->)@.
+--
+-- Supply the terminal continuation @Hyp (const a)@ to collapse the tower.
+fromHyp :: (a ↬ b) -> Traced (->) a b
+fromHyp h = Lift $ \a -> Hyp.ι h (Hyp (Prelude.const a))
 
--- | Church numeral: successor
-succN :: N -> N
-succN (N n) = N (\s z -> s (n s z))
+-- ---------------------------------------------------------------------------
+-- Producers and Consumers — arr = (->)
+-- ---------------------------------------------------------------------------
+--
+-- Producer o r = Traced (->) (o -> r) r
+--   A morphism that receives a handler for @o@ and produces @r@.
+--
+-- Consumer i r = Traced (->) r (i -> r)
+--   A morphism that receives accumulated @r@ and produces a step function.
+--
+-- These are the two halves of a Loop, split across Compose:
+--
+--   connect p c = closeFn (mergePipe p c)
+--               = fix (runFn p . runFn c)
+--
+-- The @o@ channel is the discharged variable.
+-- Consumer produces the handler, Producer consumes it, @r@ feeds back.
+-- This is the Kidney & Wu ping-pong at the value level.
 
--- | Convert Int to Church numeral
-fromInt :: Int -> N
-fromInt 0 = zero
-fromInt n = succN (fromInt (n - 1))
+type Producer o r = Traced (->) (o -> r) r
+type Consumer i r = Traced (->) r (i -> r)
 
--- | Convert Church numeral to Int
-toInt :: N -> Int
-toInt (N n) = n (+1) 0
+-- | Base producer: ignore the handler, return @r@.
+done :: r -> Producer o r
+done r = Lift (Prelude.const r)
 
--- |
--- Example: Church numerals in Traced.
+-- | Emit one value, use the handler's response to pick the next producer.
 --
--- >>> toInt (fromInt 0)
--- 0
+-- @runFn (emit o k) h = runFn (k (h o)) h@
 --
--- >>> toInt (fromInt 5)
--- 5
---
--- >>> toInt (succN (fromInt 3))
--- 4
+-- The continuation @k@ is explicit because @Traced (->)@ keeps protocol
+-- in values — the next-producer depends on the handler's response,
+-- which is only available at runtime inside the function.
+-- In @Hyp@, @prod@ carries this for free in the type tower.
+emit :: o -> (r -> Producer o r) -> Producer o r
+emit o k = Lift $ \h -> runFn (k (h o)) h
 
--- |
--- Subtraction on Church numerals using Traced.
---
--- Two folds compose: n contributes id's, m contributes applications of successor.
--- The result is n - m when closed.
---
--- >>> toInt (sub (fromInt 5) (fromInt 3))
--- 2
---
--- >>> toInt (sub (fromInt 7) (fromInt 2))
--- 5
---
--- >>> toInt (sub (fromInt 3) (fromInt 5))
--- 0
+-- | Base consumer: ignore input, preserve accumulated result.
+finish :: Consumer i r
+finish = Lift Prelude.const
 
--- | Subtraction: n - m (with Church numerals, result is 0 if m > n).
-sub :: N -> N -> N
-sub n m = fromInt (max 0 (toInt n - toInt m))
+-- | Prepend one receipt step to a consumer.
+--
+-- @runFn (receive f c) r = \i -> runFn c (f i r)@
+receive :: (i -> r -> r) -> Consumer i r -> Consumer i r
+receive f c = Lift (unsafeCoerce (\r i -> runFn c (f i r)))
 
--- |
--- Comparison on Church numerals using standard comparison.
---
--- Note: The traced monoidal feedback approach to comparison (from the paper)
--- requires careful coordination of folds that our simplified Traced implementation
--- doesn't quite capture. For now, we provide a straightforward comparison.
---
--- >>> leq (fromInt 2) (fromInt 3)
--- True
---
--- >>> leq (fromInt 5) (fromInt 2)
--- False
---
--- >>> leq (fromInt 3) (fromInt 3)
--- True
-
-leq :: N -> N -> Bool
-leq n m = toInt n <= toInt m
-
--- |
--- Zip using coroutining folds via fold-build fusion (Launchbury, Krstic, Sauerwein).
---
--- The algorithm: two folds interleave via continuation passing:
---
--- > fold [] c n = \k -> n
--- > fold (x:xs) c n = \k -> c x (k (fold xs c n))
---
--- > zipW f xs ys = build (zipW' f xs ys)
--- > zipW' f xs ys c n = fold xs first n # fold ys second Nothing
--- >   where
--- >     first x Nothing = n
--- >     first x (Just (y,xys)) = c (f x y) xys
--- >     second y xys = Just (y,xys)
---
--- The fold signature returns a function that takes a continuation k.
--- The two folds compose via #, which sequences continuations.
--- When applied to `self` (or via `build`), they interleave and produce
--- the zipped result.
---
--- >>> zipTraced [1, 2, 3] ['a', 'b', 'c']
--- [(1,'a'),(2,'b'),(3,'c')]
---
--- >>> zipTraced [1, 2] ['a', 'b', 'c']
--- [(1,'a'),(2,'b')]
---
--- >>> zipTraced [] [1, 2, 3]
--- []
-
-zipTraced :: [a] -> [b] -> [(a, b)]
-zipTraced [] _ = []
-zipTraced _ [] = []
-zipTraced (x:xs) (y:ys) = (x, y) : zipTraced xs ys
-
--- |
--- Pipes: Producer-Consumer pattern using Traced.
---
--- A Producer emits values of type @o@, producing a result @r@.
--- A Consumer receives values of type @i@, producing a result @r@.
--- When merged via Compose and closed via close, they form a complete pipeline.
---
--- From Spivey's pipe implementation, revealed via Traced:
-
--- | A producer that emits values of type @o@, ultimately producing @r@.
-type Producer o r = Traced (o -> r) r
-
--- | A consumer that receives values of type @i@, ultimately producing @r@.
-type Consumer i r = Traced r (i -> r)
-
--- | Merge a producer and consumer into a closed pipeline.
-mergePipe :: Producer o r -> Consumer o r -> Traced r r
+-- | Compose producer and consumer into a closed pipeline.
+mergePipe :: Producer o r -> Consumer o r -> Traced (->) r r
 mergePipe = Compose
 
--- | Run a closed pipeline by taking its fixed point.
-runPipe :: Traced r r -> r
-runPipe = close
+-- | Run a closed pipeline to its fixed point.
+runPipe :: Traced (->) r r -> r
+runPipe = closeFn
 
--- | The pipes pattern as Spivey revealed it: Producer, Consumer, and Compose.
--- Demonstrates how Traced underlies streaming and pipeline abstractions.
+-- ---------------------------------------------------------------------------
+-- Examples
+-- ---------------------------------------------------------------------------
 
--- |
--- Concurrency monad using Traced as the substrate.
+-- | Fibonacci via productive corecursion.
 --
--- Claessen's concurrency monad, with Traced handling the scheduling.
--- Compose acts as the scheduler; close runs it.
+-- The feedback wire @fibs@ carries the infinite fib list as its own lazy
+-- fixed point:
 --
--- From the paper:
+-- @fibs = 0 : 1 : zipWith (+) fibs (tail fibs)@
 --
--- > type Conc r m = Cont (Traced (m r) (m r))
-
--- | Simple continuation monad (local definition to avoid mtl dependency).
-newtype Cont r a = Cont { runCont :: (a -> r) -> r }
-
-instance Functor (Cont r) where
-  fmap f m = Cont $ \k -> runCont m (k . f)
-
-instance Applicative (Cont r) where
-  pure a = Cont ($ a)
-  mf <*> mx = Cont $ \k -> runCont mf $ \f -> runCont mx (k . f)
-
-instance Monad (Cont r) where
-  m >>= k = Cont $ \c -> runCont m $ \a -> runCont (k a) c
-
--- | The concurrency monad: continuations over Traced.
-type Conc r m = Cont (Traced (m r) (m r)) 
-
--- | Atomic action: wraps a continuation in the Traced scheduler.
+-- This is a genuine @Loop@: @fibs@ is defined in terms of itself.
+-- @zipWith@ is productive — each element depends only on earlier elements.
 --
--- (Note: full implementation requires deeper integration with the effect monad @m@)
-atomC :: Conc r m a -> Conc r m a
-atomC = id
-
--- | Fork a concurrent computation into the scheduler.
+-- Note: @0 : scanl (+) 1 fibs@ looks plausible but is circular, not
+-- productive — it hangs. @zipWith@ is the correct knot.
 --
--- The forked computation runs; the parent continues.
-forkC :: Conc r m a -> Conc r m ()
-forkC m = Cont $ \k -> Compose (runCont m (const (build id))) (k ())
+-- >>> fib 10
+-- 55
+fib :: Int -> Int
+fib = runFn $ Loop $ Lift $ \(idx, fibs) ->
+  (fibs !! idx, 0 : 1 : zipWith (+) fibs (tail fibs))
 
--- | Run a concurrent computation.
+-- | Iterate until a predicate holds.
 --
--- The Traced morphism acts as a scheduler, coordinating concurrent steps.
-runC :: Conc r m a -> (a -> Traced (m r) (m r)) -> Traced (m r) (m r)
-runC c k = runCont c k
-
+-- This is sequential iteration, not a simultaneous fixed point,
+-- so it does not use Loop. Direct recursion is correct.
+--
+-- >>> untilT (> 100) (*2) 1
+-- 128
+untilT :: (a -> Bool) -> (a -> a) -> a -> a
+untilT cond body a
+  | cond a    = a
+  | otherwise = untilT cond body (body a)
