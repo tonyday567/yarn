@@ -1,5 +1,6 @@
 packages:
   traced.cabal
+  ../mealy/mealy.cabal
 
 write-ghc-environment-files: always
 

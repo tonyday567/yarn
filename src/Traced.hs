@@ -49,10 +49,8 @@ module Traced
   , lift
   , build
   , untrace
-    -- * Running
-  , run
+    -- * Running (explicit interpreters)
   , runFn
-  , close
   , closeFn
   , runHyp
     -- * Bridge
@@ -217,20 +215,8 @@ closeFn = fix Prelude.. runFn
 -- Each constructor dispatches to the corresponding @arr@ operation:
 --
 -- @
--- Pure     →  id
--- Lift f   →  f
--- Compose  →  (.)
--- Loop p   →  loop (run p)
--- @
-run :: (Category arr, ArrowLoop arr) => Traced arr a b -> arr a b
-run Pure          = id
-run (Lift f)      = f
-run (Compose g h) = run g . run h
-run (Loop p)      = loop (run p)
-
--- | Synonym for @run@ at @a = b@. The loop closes in @arr@.
-close :: (Category arr, ArrowLoop arr) => Traced arr a a -> arr a a
-close = run
+-- Removed: the generic ArrowLoop-based run was adding confusion.
+-- Use explicit interpreters instead: runFn, runHyp, runMealy
 
 -- ---------------------------------------------------------------------------
 -- Running: arr = (↬)
