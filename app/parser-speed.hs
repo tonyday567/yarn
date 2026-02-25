@@ -18,6 +18,7 @@ import Text.HTML.Parser qualified as HP
 import Text.HTML.Tree qualified as HP
 import Prelude
 import Lexer
+import LexerTraced
 
 data RunType = RunDefault | RunReduced | RunMarkup | RunWhitespace | RunWrappedQ | RunIsa | RunByteStringOf | RunMealy deriving (Eq, Show)
 
@@ -68,8 +69,9 @@ main = do
     RunMealy -> do
       bs <- B.readFile f
       reportMainWith rep (show r) $ do
-        _ <- ffap "hand-written tokenize" (length . runMarkupLexerBS)    bs
-        _ <- ffap "mealy tokenize"        (length . runMarkupMealyBS)    bs
+        _ <- ffap "hand-written tokenize"  (length . runMarkupLexerBS)       bs
+        _ <- ffap "mealy tokenize"         (length . runMarkupMealyBS)       bs
+        _ <- ffap "traced mealy tokenize"  (length . runMarkupLexerTracedBS) bs
         pure ()
 
     RunDefault -> do

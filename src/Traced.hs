@@ -49,7 +49,8 @@ module Traced
   , lift
   , build
   , untrace
-    -- * Running (explicit interpreters)
+    -- * Running (generic and specific interpreters)
+  , run
   , runFn
   , closeFn
   , runHyp
@@ -74,8 +75,8 @@ import Prelude hiding (id, (.))
 import qualified Prelude
 
 import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..), ArrowLoop (..))
-import Data.Profunctor  (Profunctor (..), Costrong (..))
+import Control.Arrow    (Arrow (..))
+import Data.Profunctor  (Profunctor (..), Strong (..), Costrong (..))
 import Unsafe.Coerce    (unsafeCoerce)  -- GHC-25897
 
 import qualified Hyp
@@ -153,17 +154,6 @@ instance Arrow (Traced (->)) where
   -- so we evaluate eagerly. Correct semantics; Arrow's first is derived.
   first p = Lift (\(a, c) -> (runFn p a, c))
 
--- | The key instance: @loop = Loop@.
---
--- ArrowLoop extension law proof:
---
--- @
--- run (Loop (Lift f)) a
---   = fst $ fix $ \(_,c) -> f (a,c)        [by runFn]
---   = (\b -> fst $ fix $ \(c,d) -> f (b,d)) a   ✓
--- @
-instance ArrowLoop (Traced (->)) where
-  loop p = Loop p
 
 -- ---------------------------------------------------------------------------
 -- Profunctor, Functor, Costrong — specialised to arr = (->)
@@ -174,6 +164,9 @@ instance Functor (Traced (->) a) where
 
 instance Profunctor (Traced (->)) where
   dimap f g p = Lift g `Compose` p `Compose` Lift f
+
+instance Strong (Traced (->)) where
+  first' p = Lift (\(a, c) -> (runFn p a, c))
 
 instance Costrong (Traced (->)) where
   unfirst = Loop
@@ -193,30 +186,44 @@ instance Costrong (Traced (->)) where
 -- 1. Associativity — left-nested @Compose@ is reassociated right.
 -- 2. Sliding      — @Loop@ on the left of @Compose@ absorbs the right.
 runFn :: Traced (->) a b -> (a -> b)
-runFn Pure                = Prelude.id
-runFn (Lift f)            = f
-runFn (Compose g h)       = case g of
+runFn Pure         = Prelude.id
+runFn (Lift f)     = f
+runFn (Compose g h)= case g of
   Pure            -> runFn h
   Lift f          -> f Prelude.. runFn h
   Compose g1 g2   -> runFn (Compose g1 (Compose g2 h))
-  Loop p          -> \a -> fst $ fix $ \t -> runFn p (runFn h a, snd t)
-runFn (Loop p)            = \a -> fst $ fix $ \t -> runFn p (a, snd t)
+  Loop p          -> loop (\(a, c) -> runFn p (runFn h a, c))
+runFn (Loop p)     = loop (runFn p)
+
+loop :: (->) (b,d) (c,d) -> (->) b c 
+loop f b = let (c,d) = f (b,d) in c
 
 -- | Take the fixed point of a closed @Traced (->)@ loop.
 closeFn :: Traced (->) a a -> a
 closeFn = fix Prelude.. runFn
 
 -- ---------------------------------------------------------------------------
--- Running: general Category + ArrowLoop
+-- ---------------------------------------------------------------------------
+-- Running: generic interpreter for any Category with Strong and Costrong
 -- ---------------------------------------------------------------------------
 
 -- | Interpret @Traced arr@ into @arr@.
 --
--- Each constructor dispatches to the corresponding @arr@ operation:
+-- Works for any base category @arr@ that implements @Strong@ and @Costrong@.
+-- The key insight: @first@ threads the feedback through compositions,
+-- @unfirst@ ties the feedback loop.
 --
--- @
--- Removed: the generic ArrowLoop-based run was adding confusion.
--- Use explicit interpreters instead: runFn, runHyp, runMealy
+-- This is the universal interpreter: the same code works for @(->)@, @Mealy@,
+-- @Hyp@, or any other category with profunctor structure.
+run :: (Category arr, Strong arr, Costrong arr) => Traced arr a b -> arr a b
+run Pure = id
+run (Lift f) = f
+run (Compose g h) = case g of
+  Pure            -> run h
+  Lift f          -> f . run h
+  Compose g1 g2   -> run (Compose g1 (Compose g2 h))
+  Loop p          -> unfirst (run p . first' (run h))
+run (Loop p) = unfirst (run p)
 
 -- ---------------------------------------------------------------------------
 -- Running: arr = (↬)
