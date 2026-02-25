@@ -31,6 +31,7 @@ module Lexer
 import Prelude hiding (id, (.))
 import qualified Prelude
 
+import Data.Function (fix)
 import Data.Word (Word8)
 import Data.Char (ord)
 import Data.ByteString (ByteString)
@@ -76,7 +77,8 @@ second' m = withMealy m $ \fi fs fe ->
 -- Compile Traced MealyM -> MealyM
 -- ---------------------------------------------------------------------------
 
-{-# INLINE runMealy #-}
+-- runMealy: interpret Traced MealyM as MealyM using simple, explicit recursion
+-- No Church encoding, no foralls - just direct Mealy composition
 runMealy :: Traced MealyM a b -> MealyM a b
 runMealy Pure          = mkMealy Prelude.id (\_ a -> (a, a)) Prelude.id
 runMealy (Lift m)      = m
