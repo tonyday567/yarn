@@ -13,6 +13,7 @@ library
     Traced
     Mealy
     MealyM
+    RunMealy
     Lexer
   build-depends:
     base       >= 4.18,
