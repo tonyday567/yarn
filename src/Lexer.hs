@@ -42,6 +42,7 @@ import Data.Maybe (mapMaybe)
 import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
 
+import GHC.Exts (lazy)
 import MealyM (MealyM (..), mkMealy, withMealy, delay)
 import Traced (Traced (..))
 import Control.Category ((.),  id)
@@ -75,7 +76,7 @@ second' m = withMealy m $ \fi fs fe ->
 -- Compile Traced MealyM -> MealyM
 -- ---------------------------------------------------------------------------
 
-{-# INLINE runMealy #-}
+-- {-# INLINE runMealy #-}  -- Disabled to prevent GHC from seeing through lazy knot
 runMealy :: Traced MealyM a b -> MealyM a b
 runMealy Pure          = mkMealy Prelude.id (\_ a -> (a, a)) Prelude.id
 runMealy (Lift m)      = m
@@ -389,8 +390,10 @@ stage1 = Lift $ mkMealy
 stage2 :: Traced MealyM ((ByteClass, Int), MarkupCtx)
                         (Maybe (ByteString -> MarkupToken, Int, Int), MarkupCtx)
 stage2 = Lift $ mkMealy
-  -- inject: lazy on ctx, do not call oAccumStep
-  (\((_, i), ctx) -> (Nothing, OAccState i 0 ctx))
+  -- inject: irrefutable pattern — do not force the input tuple.
+  -- This allows the lazy knot to tie ctx before s1e is evaluated.
+  -- OAccState stores ctx lazily (not UNPACK'd); i is forced but that's fine.
+  (\input -> let ~((_, i), ctx) = input in (Nothing, OAccState i 0 ctx))
   -- step: carry OAccState, use its ctx (updated each step via Loop)
   (\(_, !acc) ((bc, i), _) ->
     let (emit, !acc') = oAccumStep acc (bc, i, oCtx acc)
@@ -482,29 +485,14 @@ mAccumStep (MAccState buf ctx) (bc, _) = case (ctx, bc) of
 -- compiledMarkupLexer performs the same composition as runMealy markupLexerI
 -- but non-recursively: withMealy on each stage, then close the Loop by hand.
 
--- | Manually compiled markup lexer.
--- Equivalent to runMealy markupLexerI but without the recursive interpreter.
--- Composed state = (s2_state, s1_state). Loop closes MarkupCtx via lazy knot.
+-- | Compiled markup lexer.
+-- Uses runMealy on markupLexerI for correctness.
+-- TODO: optimize with manual inlining once lazy knot deadlock is fixed.
+-- The deadlock occurs because stage2's init forces the context argument
+-- before the lazy knot has fully established.
 compiledMarkupLexer :: MealyM WI (Maybe (ByteString -> MarkupToken, Int, Int))
-compiledMarkupLexer =
-  withMealy (case stage1 of Lift m -> m; _ -> error "compiledMarkupLexer: stage1") $ \s1i s1s s1e ->
-  withMealy (case stage2 of Lift m -> m; _ -> error "compiledMarkupLexer: stage2") $ \s2i s2s s2e ->
-  mkMealy
-    -- inject: lazy knot ties MarkupCtx feedback.
-    -- stage1 inject does not force ctx; stage2 inject does not force ctx.
-    -- The knot c0 = snd (s2e s0) ties before either forces it.
-    (\wi ->
-      let !t0 = s1i (wi, c0)
-          !s0 = s2i (s1e t0)
-          c0  = snd (s2e s0)
-      in  (s0, t0))
-    (\(s, t) wi ->
-      let ctx          = snd (s2e s)
-          (mid, !t')   = s1s t (wi, ctx)
-          (out, !s')   = s2s s mid
-          b            = fst (s2e s')
-      in  (b, (s', t')))
-    (\(s, _) -> fst (s2e s))
+compiledMarkupLexer = runMealy markupLexerI
+
 
 -- | Run compiledMarkupLexer over a ByteString.
 runCompiledMarkupBS :: ByteString -> [MarkupToken]
