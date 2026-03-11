@@ -53,6 +53,20 @@
 -- @Hyp MealyM@ encodes the same structure corecursively. @zipper@ is
 -- productive — each call unfolds one @ι f@ layer before recurring.
 -- GHC sees plain @MealyM@ compositions with no recursive interpreter.
+--
+-- = Co: Incomplete Replication of Kidney & Wu's Coroutine Protocol
+--
+-- The @Co@ type and @send@\/@send'@ functions form an incomplete implementation
+-- of Kidney & Wu's coroutine send\/receive protocol. This is intentional: the
+-- implementation verifies whether their design is sound or underspecified.
+-- 
+-- A prior agent claimed the Kidney & Wu protocol was not fully thought through.
+-- Rather than assume, we implement it here to test the claim. The protocol may
+-- need refinement, but the framework is in place for verification.
+--
+-- The functions @send@ and @send'@ are currently unused in yarn examples, but
+-- remain exported as a design-level assertion: coroutine interactions via
+-- hyperfunctions are worth exploring, whether or not this exact approach works.
 module Hyp
   ( Hyp (..),
     type (↬),
@@ -189,7 +203,13 @@ cons f p = Hyp $ \q -> \i -> f i (ι q p)
 -- ---------------------------------------------------------------------------
 
 -- | Coroutine: a function from a continuation to a channel.
+-- Incomplete replication of Kidney & Wu's coroutine protocol for hyperfunctions.
+--
 -- Identical structure to @Hyp.Co@ with @(↬)@ replaced by @Hyp (->)@.
+-- 
+-- The @send@ and @send'@ operations complete the protocol, but their correctness
+-- in encoding Kidney & Wu's intended semantics is unverified. This is an
+-- exploration to determine if the protocol is fully specified or requires refinement.
 newtype Co r i o m a = Co
   {route :: (a -> Channel (->) i o (m r)) -> Channel (->) i o (m r)}
 
@@ -197,7 +217,10 @@ newtype Co r i o m a = Co
 yield :: o -> Co r i o m i
 yield x = Co $ \k -> Hyp $ \h i -> invoke h (k i) x
 
--- | Send a value into a coroutine. Recovers @Hyp.send@.
+-- | Send a value into a coroutine. Incomplete implementation of @Hyp.send@.
+--
+-- Uses continuation escape (@callCC@) to implement the send\/receive handshake.
+-- This is an unverified encoding; the Kidney & Wu protocol may require adjustments.
 send ::
   (MonadCont m) =>
   Co r i o m r ->
@@ -210,7 +233,10 @@ send c v = callCC $ \k ->
       (Hyp (\r o -> k (Right (o, Co (const r)))))
       v
 
--- | Send, assuming no termination. Recovers @Hyp.send'@.
+-- | Send, assuming no termination. Incomplete implementation of @Hyp.send'@.
+-- 
+-- Unwraps the @Either@ constraint from @send@, assuming the coroutine never
+-- terminates. Part of the unverified Kidney & Wu protocol verification.
 send' :: (MonadCont m) => Co x i o m x -> i -> m (o, Co x i o m x)
 send' c v = either undefined id <$> send c v
 
