@@ -26,24 +26,23 @@
 -- Store c b = (c -> b, c) — forward value c, setter c -> b.
 -- The setter IS the backward pass for autodiff:
 -- given upstream gradient c, produce downstream gradient b.
-
 module LensS
-  ( LensS (..)
-  , Store (..)
-  , mkLensS
-  , getS
-  , setS
-  ) where
+  ( LensS (..),
+    Store (..),
+    mkLensS,
+    getS,
+    setS,
+  )
+where
 
-import Prelude hiding (id, (.))
-import qualified Prelude
+import Control.Arrow (Arrow (..))
 import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..))
-import Data.Profunctor  (Profunctor (..), Strong (..))
-
-import Para (Para (..))-- ---------------------------------------------------------------------------
+import Data.Profunctor (Profunctor (..), Strong (..))
+import Para (Para (..)) -- ---------------------------------------------------------------------------
 -- Store comonad
 -- ---------------------------------------------------------------------------
+import Prelude hiding (id, (.))
+import Prelude qualified
 
 -- | @Store b a = (b -> a, b)@
 -- A stored value of type @b@ with a setter @b -> a@.
@@ -66,7 +65,7 @@ peek (Store f _) b = f b
 
 -- | @LensS a b = a -> Store b a@
 -- Lens from source @a@ to focus @b@.
-newtype LensS a b = LensS { runLensS :: a -> Store b a }
+newtype LensS a b = LensS {runLensS :: a -> Store b a}
 
 -- ---------------------------------------------------------------------------
 -- Category

@@ -1,6 +1,6 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UnicodeSyntax #-}
-{-# LANGUAGE RankNTypes #-}
 
 -- |
 -- Module      : HypH
@@ -50,36 +50,41 @@
 -- @HypH MealyM@ encodes the same structure corecursively. @zipper@ is
 -- productive — each call unfolds one @ι f@ layer before recurring.
 -- GHC sees plain @MealyM@ compositions with no recursive interpreter.
-
 module Hyp
-  ( HypH (..)
-    -- * Core operations
-  , zipper
-  , runFn
-  , stream
-    -- * Producer / Consumer
-  , Producer
-  , Consumer
-  , Channel
-  , prod
-  , cons
-    -- * Co: coroutine over HypH
-  , Co (..)
-  , yield
-  , send
-  , send'
-    -- * Examples
-  , zip
-    -- * Helpers
-  , base
-  , rep
-  , invoke
-  ) where
+  ( HypH (..),
 
-import Prelude hiding (id, (.), zip)
+    -- * Core operations
+    zipper,
+    runFn,
+    stream,
+
+    -- * Producer / Consumer
+    Producer,
+    Consumer,
+    Channel,
+    prod,
+    cons,
+
+    -- * Co: coroutine over HypH
+    Co (..),
+    yield,
+    send,
+    send',
+
+    -- * Examples
+    zip,
+
+    -- * Helpers
+    base,
+    rep,
+    invoke,
+  )
+where
+
+import Control.Arrow (Arrow (..))
 import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..))
 import Control.Monad.Cont
+import Prelude hiding (id, zip, (.))
 
 -- ---------------------------------------------------------------------------
 -- The type
@@ -91,7 +96,7 @@ import Control.Monad.Cont
 --
 -- When @arr = (->)@: recovers @Hyp@ exactly.
 -- When @arr = MealyM@: a Mealy machine whose input is the dual hyperfunction.
-newtype HypH arr a b = HypH { ι :: arr (HypH arr b a) b }
+newtype HypH arr a b = HypH {ι :: arr (HypH arr b a) b}
 
 -- ---------------------------------------------------------------------------
 -- Core operations
@@ -103,7 +108,7 @@ newtype HypH arr a b = HypH { ι :: arr (HypH arr b a) b }
 --
 -- Productive: unfolds @ι f@ before each recursive @zipper g h@.
 -- Requires @Arrow arr@ to lift the Haskell corecursion into @arr@.
-zipper :: Arrow arr => HypH arr b c -> HypH arr a b -> HypH arr a c
+zipper :: (Arrow arr) => HypH arr b c -> HypH arr a b -> HypH arr a c
 zipper f g = HypH $ ι f . arr (g `zipper`)
 
 -- | Run a closed @HypH (->) a a@. Recovers @Hyp.run@.
@@ -119,8 +124,10 @@ stream f h = HypH $ \k -> f (ι k h)
 -- ---------------------------------------------------------------------------
 
 type Producer arr o a = HypH arr (o -> a) a
+
 type Consumer arr i a = HypH arr a (i -> a)
-type Channel  arr i o a = HypH arr (o -> a) (i -> a)
+
+type Channel arr i o a = HypH arr (o -> a) (i -> a)
 
 -- | Send a value through a producer. Recovers @Hyp.prod@.
 prod :: o -> Producer (->) o a -> Producer (->) o a
@@ -137,25 +144,27 @@ cons f p = HypH $ \q -> \i -> f i (ι q p)
 -- | Coroutine: a function from a continuation to a channel.
 -- Identical structure to @Hyp.Co@ with @(↬)@ replaced by @HypH (->)@.
 newtype Co r i o m a = Co
-  { route :: (a -> Channel (->) i o (m r)) -> Channel (->) i o (m r) }
+  {route :: (a -> Channel (->) i o (m r)) -> Channel (->) i o (m r)}
 
 -- | Yield a value, await a response. Recovers @Hyp.yield@.
 yield :: o -> Co r i o m i
 yield x = Co $ \k -> HypH $ \h i -> invoke h (k i) x
 
 -- | Send a value into a coroutine. Recovers @Hyp.send@.
-send :: MonadCont m
-     => Co r i o m r
-     -> i
-     -> m (Either r (o, Co r i o m r))
+send ::
+  (MonadCont m) =>
+  Co r i o m r ->
+  i ->
+  m (Either r (o, Co r i o m r))
 send c v = callCC $ \k ->
-  Left <$> invoke
-    (route c (\x -> HypH (\_ _ -> return x)))
-    (HypH (\r o -> k (Right (o, Co (const r)))))
-    v
+  Left
+    <$> invoke
+      (route c (\x -> HypH (\_ _ -> return x)))
+      (HypH (\r o -> k (Right (o, Co (const r)))))
+      v
 
 -- | Send, assuming no termination. Recovers @Hyp.send'@.
-send' :: MonadCont m => Co x i o m x -> i -> m (o, Co x i o m x)
+send' :: (MonadCont m) => Co x i o m x -> i -> m (o, Co x i o m x)
 send' c v = either undefined id <$> send c v
 
 -- ---------------------------------------------------------------------------

@@ -27,25 +27,25 @@
 -- @Traced (Para p) a b@ is the free traced monoidal category of
 -- @p@-parameterised functions. @run@ gives @Para p a b = (p,a) -> b@.
 -- @Loop@ gives feedback over parameterised computations.
-
 module Para
-  ( Para (..)
-  , runPara
-  , liftPara
-  , forgetPara
-  ) where
+  ( Para (..),
+    runPara,
+    liftPara,
+    forgetPara,
+  )
+where
 
-import Prelude hiding (id, (.))
+import Control.Arrow (Arrow (..), ArrowLoop (..))
 import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..), ArrowLoop (..))
-import Data.Profunctor  (Profunctor (..), Strong (..), Costrong (..))
+import Data.Profunctor (Costrong (..), Profunctor (..), Strong (..))
+import Prelude hiding (id, (.))
 
 -- ---------------------------------------------------------------------------
 -- The type
 -- ---------------------------------------------------------------------------
 
 -- | Parameterised morphism: @(p, a) -> b@.
-newtype Para p a b = Para { unPara :: (p, a) -> b }
+newtype Para p a b = Para {unPara :: (p, a) -> b}
 
 -- | Run with explicit parameter.
 runPara :: Para p a b -> p -> a -> b
@@ -64,7 +64,7 @@ instance Category (Para p) where
 -- ---------------------------------------------------------------------------
 
 instance Arrow (Para p) where
-  arr f    = Para $ \(_, a) -> f a
+  arr f = Para $ \(_, a) -> f a
   first (Para f) = Para $ \(p, (a, c)) -> (f (p, a), c)
 
 -- ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ExistentialQuantification #-}
 
 -- |
 -- Module      : ToHypH
@@ -23,28 +23,30 @@
 --
 -- Fugal extension s♭(e, a::as) = s(e,a) :: s♭(d(e,a), as)
 -- is exactly zipper unfolding. Compose → zipper is correct.
-
 module ToHypH
-  ( toHypH
-  , liftH
-  , loopH
-  ) where
+  ( toHypH,
+    liftH,
+    loopH,
+  )
+where
 
-import Prelude hiding (id, (.))
-import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..))
-import Data.Profunctor
-import Data.Mealy (Mealy (..), pattern M)
-import Hyp       (HypH (..), zipper)
-import Traced     (Traced (..))
 import Control.Arrow
+import Control.Arrow (Arrow (..))
+import Control.Category (Category (..))
+import Data.Mealy (Mealy (..), pattern M)
+import Data.Profunctor
+import Hyp (HypH (..), zipper)
+import Traced (Traced (..))
+import Prelude hiding (id, (.))
 
 instance Arrow Mealy where
   arr f = M (\a -> f a) (\_ a -> f a) id
-  first (M i s e) = M 
-    (\(a,c) -> (i a, c))
-    (\(sa,c) (a,_) -> (s sa a, c))
-    (\(sa,c) -> (e sa, c))
+  first (M i s e) =
+    M
+      (\(a, c) -> (i a, c))
+      (\(sa, c) (a, _) -> (s sa a, c))
+      (\(sa, c) -> (e sa, c))
+
 -- ---------------------------------------------------------------------------
 -- idH: identity
 -- ---------------------------------------------------------------------------
@@ -53,14 +55,16 @@ instance Arrow Mealy where
 -- ι idH :: Mealy (HypH Mealy a a) a
 -- Run the dual's ι against idH to get the a, return it.
 idH :: HypH Mealy a a
-idH = HypH $ M
-  -- inject: HypH Mealy a a -> s
-  -- Run ι h against idH to get an a, use as state
-  (\h -> runDual h idH)
-  -- step: ignore current state, run dual with idH
-  (\_ h -> runDual h idH)
-  -- extract: identity
-  id
+idH =
+  HypH $
+    M
+      -- inject: HypH Mealy a a -> s
+      -- Run ι h against idH to get an a, use as state
+      (\h -> runDual h idH)
+      -- step: ignore current state, run dual with idH
+      (\_ h -> runDual h idH)
+      -- extract: identity
+      id
   where
     runDual :: HypH Mealy a a -> HypH Mealy a a -> a
     runDual h cont = case ι h of
@@ -77,14 +81,16 @@ idH = HypH $ M
 liftH :: Mealy a b -> HypH Mealy a b
 liftH m = case m of
   M inject step extract ->
-    let self = HypH $ M
-          -- inject: get a from dual, seed m's state
-          (\h -> inject (getA h self))
-          -- step: get a from dual, step m
-          (\s h -> step s (getA h self))
-          -- extract: m's extract
-          extract
-    in  self
+    let self =
+          HypH $
+            M
+              -- inject: get a from dual, seed m's state
+              (\h -> inject (getA h self))
+              -- step: get a from dual, step m
+              (\s h -> step s (getA h self))
+              -- extract: m's extract
+              extract
+     in self
   where
     getA :: HypH Mealy b a -> HypH Mealy a b -> a
     getA h cont = case ι h of
@@ -105,44 +111,46 @@ loopH p =
             -- inject: build dual HypH Mealy (b,c) (a,c) that feeds back c.
             -- pi :: HypH Mealy (b,c) (a,c) -> s
             -- We construct a dual that returns (a, c0) where c0 is lazy knot.
-            (\h ->
-              let a    = getA h self
-                  dual = mkFeedback a c0   -- dual produces (a, c0)
-                  s0   = pi dual
-                  c0   = snd (pe s0)       -- lazy knot: c0 from first extract
-              in  s0)
+            ( \h ->
+                let a = getA h self
+                    dual = mkFeedback a c0 -- dual produces (a, c0)
+                    s0 = pi dual
+                    c0 = snd (pe s0) -- lazy knot: c0 from first extract
+                 in s0
+            )
             -- step: build new dual with updated c from current state
-            (\s h ->
-              let a    = getA h self
-                  c    = snd (pe s)
-                  dual = mkFeedback a c
-              in  ps s dual)
+            ( \s h ->
+                let a = getA h self
+                    c = snd (pe s)
+                    dual = mkFeedback a c
+                 in ps s dual
+            )
             -- extract: fst of pe
             (fst . pe)
-  in  self
+   in self
   where
     getA :: HypH Mealy b a -> HypH Mealy a b -> a
     getA h cont = case ι h of
       M di _ de -> de (di cont)
 
-    -- | Construct a HypH Mealy (b,c) (a,c) that ignores its input
+    -- \| Construct a HypH Mealy (b,c) (a,c) that ignores its input
     -- and always produces (a, c) — the fixed feedback pair.
-    mkFeedback :: a -> c -> HypH Mealy (b,c) (a,c)
-    mkFeedback a c = HypH $ M
-      (\_ -> (a, c))
-      (\_ _ -> (a, c))
-      id
+    mkFeedback :: a -> c -> HypH Mealy (b, c) (a, c)
+    mkFeedback a c =
+      HypH $
+        M
+          (\_ -> (a, c))
+          (\_ _ -> (a, c))
+          id
 
 -- ---------------------------------------------------------------------------
 -- toHypH: the catamorphism
 -- ---------------------------------------------------------------------------
 
 toHypH :: Traced Mealy a b -> HypH Mealy a b
-toHypH Pure          = idH
-toHypH (Lift m)      = liftH m
+toHypH Pure = idH
+toHypH (Lift m) = liftH m
 toHypH (Compose g h) = toHypH g `zipper` toHypH h
-toHypH (Loop p)      = loopH (toHypH p)
+toHypH (Loop p) = loopH (toHypH p)
 
--- |
 runHypH h = ι h (HypH runHypH)
-

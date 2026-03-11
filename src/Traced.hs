@@ -1,7 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 -- |
@@ -42,49 +42,53 @@
 -- Finally Tagless puts protocol in types (erased at runtime, inaccessible).
 -- Initially Tagged puts protocol in values (present at runtime, inspectable).
 -- Don't give your values to types.
-
 module Traced
   ( -- * The GADT
-    Traced (..)
-  , lift
-  , build
-  , untrace
+    Traced (..),
+    lift,
+    build,
+    untrace,
+
     -- * Running
-  , run
-  , runFn
-  , close
-  , closeFn
-  , runHyp
+    run,
+    runFn,
+    close,
+    closeFn,
+    runHyp,
+
     -- * Bridge
-  , toHyp
-  , fromHyp
-  , toHypH
-  , closeHypH
+    toHyp,
+    fromHyp,
+    toHypH,
+    closeHypH,
+
     -- * Producers and Consumers
-  , Producer
-  , Consumer
-  , done
-  , emit
-  , finish
-  , receive
-  , mergePipe
-  , runPipe
+    Producer,
+    Consumer,
+    done,
+    emit,
+    finish,
+    receive,
+    mergePipe,
+    runPipe,
+
     -- * Examples
-  , fib
-  , untilT
-  ) where
+    fib,
+    untilT,
+  )
+where
 
-import Prelude hiding (id, (.))
-import qualified Prelude
-
+import Control.Arrow (Arrow (..), ArrowLoop (..))
 import Control.Category (Category (..))
-import Control.Arrow    (Arrow (..), ArrowLoop (..))
-import Data.Profunctor  (Profunctor (..), Costrong (..))
-import Unsafe.Coerce    (unsafeCoerce)  -- GHC-25897
+import Data.Profunctor (Costrong (..), Profunctor (..))
+-- GHC-25897
 
-import qualified HypWu
+import Hyp qualified
 import HypWu (type (↬) (Hyp))
-import qualified Hyp
+import HypWu qualified
+import Unsafe.Coerce (unsafeCoerce)
+import Prelude hiding (id, (.))
+import Prelude qualified
 
 -- ---------------------------------------------------------------------------
 -- Fixed point
@@ -103,26 +107,30 @@ fix f = let x = f x in x
 -- The @Loop@ constructor seals the feedback type @c@ existentially —
 -- it is invisible from outside, which is what makes the sliding law hold
 -- by parametricity.
-
 data Traced arr a b where
-  Pure    :: Traced arr a a
-  -- ^ Identity morphism.
-
-  Lift    :: arr a b -> Traced arr a b
-  -- ^ Lift a base morphism into syntax.
-  -- When @arr = (->)@: lifts a Haskell function.
-  -- When @arr = (↬)@:  lifts a hyperfunction.
-  -- When @arr = Mealy@: lifts one Mealy machine step.
-
-  Compose :: Traced arr b c -> Traced arr a b -> Traced arr a c
-  -- ^ Sequential composition (right runs first).
-
-  Loop    :: Traced arr (a, c) (b, c) -> Traced arr a b
-  -- ^ Feedback: close the @c@ wire.
-  -- The feedback variable @c@ is existential — sealed, unobservable.
-  -- Initialisation is the responsibility of the ArrowLoop instance for @arr@:
-  -- for @(->)@ a lazy fixed point suffices; for @Mealy@ inject must not
-  -- strictly force @c@ so the knot can be tied.
+  Pure ::
+    -- | Identity morphism.
+    Traced arr a a
+  Lift ::
+    arr a b ->
+    -- | Lift a base morphism into syntax.
+    -- When @arr = (->)@: lifts a Haskell function.
+    -- When @arr = (↬)@:  lifts a hyperfunction.
+    -- When @arr = Mealy@: lifts one Mealy machine step.
+    Traced arr a b
+  Compose ::
+    Traced arr b c ->
+    Traced arr a b ->
+    -- | Sequential composition (right runs first).
+    Traced arr a c
+  Loop ::
+    Traced arr (a, c) (b, c) ->
+    -- | Feedback: close the @c@ wire.
+    -- The feedback variable @c@ is existential — sealed, unobservable.
+    -- Initialisation is the responsibility of the ArrowLoop instance for @arr@:
+    -- for @(->)@ a lazy fixed point suffices; for @Mealy@ inject must not
+    -- strictly force @c@ so the knot can be tied.
+    Traced arr a b
 
 -- ---------------------------------------------------------------------------
 -- Smart constructors
@@ -145,7 +153,7 @@ untrace f = Loop (Lift f)
 -- ---------------------------------------------------------------------------
 
 instance Category (Traced arr) where
-  id  = Pure
+  id = Pure
   (.) = Compose
 
 -- ---------------------------------------------------------------------------
@@ -154,6 +162,7 @@ instance Category (Traced arr) where
 
 instance Arrow (Traced (->)) where
   arr = Lift
+
   -- first has no syntactic form without a product constructor,
   -- so we evaluate eagerly. Correct semantics; Arrow's first is derived.
   first p = Lift (\(a, c) -> (runFn p a, c))
@@ -182,10 +191,12 @@ instance Profunctor (Traced (->)) where
 
 instance Costrong (Traced (->)) where
   unfirst = Loop
+
   -- unsecond :: p (d,a) (d,b) -> p a b
   -- Swap input, run p, swap output, close the d wire with Loop.
   unsecond p = Loop (Lift sw `Compose` p `Compose` Lift sw)
-    where sw (a, b) = (b, a)
+    where
+      sw (a, b) = (b, a)
 
 -- ---------------------------------------------------------------------------
 -- Running: arr = (->) with Mendler-style normaliser
@@ -209,16 +220,15 @@ instance Costrong (Traced (->)) where
 -- See @test-traced-fn-simple.hs@ for integration tests of Loop behavior
 -- with identity and fixed-point functions. The core pattern:
 -- Loop absorbs the feedback wire via Mendler normalisation.
---
 runFn :: Traced (->) a b -> (a -> b)
-runFn Pure                = Prelude.id
-runFn (Lift f)            = f
-runFn (Compose g h)       = case g of
-  Pure            -> runFn h
-  Lift f          -> f Prelude.. runFn h
-  Compose g1 g2   -> runFn (Compose g1 (Compose g2 h))
-  Loop p          -> \a -> fst $ fix $ \t -> runFn p (runFn h a, snd t)
-runFn (Loop p)            = \a -> fst $ fix $ \t -> runFn p (a, snd t)
+runFn Pure = Prelude.id
+runFn (Lift f) = f
+runFn (Compose g h) = case g of
+  Pure -> runFn h
+  Lift f -> f Prelude.. runFn h
+  Compose g1 g2 -> runFn (Compose g1 (Compose g2 h))
+  Loop p -> \a -> fst $ fix $ \t -> runFn p (runFn h a, snd t)
+runFn (Loop p) = \a -> fst $ fix $ \t -> runFn p (a, snd t)
 
 -- | Take the fixed point of a closed @Traced (->)@ loop.
 closeFn :: Traced (->) a a -> a
@@ -239,10 +249,10 @@ closeFn = fix Prelude.. runFn
 -- Loop p   →  loop (run p)
 -- @
 run :: (Category arr, ArrowLoop arr) => Traced arr a b -> arr a b
-run Pure          = id
-run (Lift f)      = f
+run Pure = id
+run (Lift f) = f
 run (Compose g h) = run g . run h
-run (Loop p)      = loop (run p)
+run (Loop p) = loop (run p)
 
 -- | Synonym for @run@ at @a = b@. The loop closes in @arr@.
 close :: (Category arr, ArrowLoop arr) => Traced arr a a -> arr a a
@@ -267,10 +277,10 @@ close = run
 -- @Loop@ adds inspectable feedback syntax above the coinductive tower.
 -- @runHyp@ discharges the syntax back into the tower.
 runHyp :: Traced (↬) a b -> (a ↬ b)
-runHyp Pure          = HypWu.rep Prelude.id
-runHyp (Lift h)      = h
+runHyp Pure = HypWu.rep Prelude.id
+runHyp (Lift h) = h
 runHyp (Compose g h) = runHyp g HypWu.⊙ runHyp h
-runHyp (Loop p)      = traceHyp (runHyp p)
+runHyp (Loop p) = traceHyp (runHyp p)
 
 -- | Close a hyperfunction feedback loop.
 --
@@ -291,10 +301,10 @@ traceHyp h = HypWu.rep $ \a ->
 -- Initial algebra → final coalgebra.
 -- Same object, different notation, different side of the erasure line.
 toHyp :: Traced (->) a b -> (a ↬ b)
-toHyp Pure          = HypWu.rep Prelude.id
-toHyp (Lift f)      = HypWu.rep f
+toHyp Pure = HypWu.rep Prelude.id
+toHyp (Lift f) = HypWu.rep f
 toHyp (Compose g h) = toHyp g HypWu.⊙ toHyp h
-toHyp u@(Loop _)    = HypWu.rep (runFn u)
+toHyp u@(Loop _) = HypWu.rep (runFn u)
 
 -- | Depth-1 unfolding: @Hyp@ → @Traced (->)@.
 --
@@ -322,6 +332,7 @@ fromHyp h = Lift $ \a -> HypWu.ι h (Hyp (Prelude.const a))
 -- This is the Kidney & Wu ping-pong at the value level.
 
 type Producer o r = Traced (->) (o -> r) r
+
 type Consumer i r = Traced (->) r (i -> r)
 
 -- | Base producer: ignore the handler, return @r@.
@@ -388,7 +399,7 @@ fib = runFn $ Loop $ Lift $ \(idx, fibs) ->
 -- 128
 untilT :: (a -> Bool) -> (a -> a) -> a -> a
 untilT cond body a
-  | cond a    = a
+  | cond a = a
   | otherwise = untilT cond body (body a)
 
 -- ---------------------------------------------------------------------------
@@ -412,10 +423,10 @@ untilT cond body a
 -- Contrast with @toHyp@: that collapses @Loop@ via @runFn@ (a lazy fixed
 -- point). @toHypH@ preserves the loop structure corecursively in the tower.
 toHypH :: Traced (->) a b -> Hyp.HypH (->) a b
-toHypH Pure          = Hyp.rep Prelude.id
-toHypH (Lift f)      = Hyp.rep f
+toHypH Pure = Hyp.rep Prelude.id
+toHypH (Lift f) = Hyp.rep f
 toHypH (Compose g h) = toHypH g `Hyp.zipper` toHypH h
-toHypH (Loop p)      = closeHypH (toHypH p)
+toHypH (Loop p) = closeHypH (toHypH p)
 
 -- | Close a @HypH (->)@ feedback loop.
 --
@@ -427,5 +438,5 @@ toHypH (Loop p)      = closeHypH (toHypH p)
 closeHypH :: Hyp.HypH (->) (a, c) (b, c) -> Hyp.HypH (->) a b
 closeHypH p = Hyp.HypH $ \k ->
   let (b, _) = Hyp.ι p dual
-      dual    = Hyp.HypH $ \_ -> (Hyp.ι k (closeHypH p), snd (Hyp.ι p dual))
-  in  b
+      dual = Hyp.HypH $ \_ -> (Hyp.ι k (closeHypH p), snd (Hyp.ι p dual))
+   in b

@@ -10,6 +10,7 @@ import Data.ByteString qualified as BS
 import Data.Text.IO qualified as Text
 import FlatParse.Basic (byteStringOf, char, satisfy, skipMany)
 import FlatParse.Basic qualified as FP
+import Lexer
 import MarkupParse
 import MarkupParse.Internal.FlatParse
 import Options.Applicative as OA
@@ -17,8 +18,6 @@ import Perf
 import Text.HTML.Parser qualified as HP
 import Text.HTML.Tree qualified as HP
 import Prelude
-import Lexer
-import Lexer
 
 data RunType = RunDefault | RunReduced | RunMarkup | RunWhitespace | RunWrappedQ | RunIsa | RunByteStringOf | RunMealy deriving (Eq, Show)
 
@@ -65,21 +64,19 @@ main = do
   let snip = speedSnippet o
 
   case r of
-
     RunMealy -> do
       bs <- B.readFile f
       reportMainWith rep (show r) $ do
-        _ <- ffap "hand-written tokenize"  (length . runMarkupLexerBS)       bs
-        _ <- ffap "Traced (->) a (State s b) tokenize"  (length . runMarkupStateBS)       bs
+        _ <- ffap "hand-written tokenize" (length . runMarkupLexerBS) bs
+        _ <- ffap "Traced (->) a (State s b) tokenize" (length . runMarkupStateBS) bs
         pure ()
-
     RunDefault -> do
       bs <- B.readFile f
       t <- Text.readFile f
       reportMainWith rep (show r) $ do
         _ <- ffap "html-parse tokens" HP.parseTokens t
-        _ <- ffap "hand-written tokenize" (length . runMarkupLexerBS)    bs
-        _ <- ffap "Traced (->) a (State s b) tokenize"        (length . runMarkupStateBS)    bs
+        _ <- ffap "hand-written tokenize" (length . runMarkupLexerBS) bs
+        _ <- ffap "Traced (->) a (State s b) tokenize" (length . runMarkupStateBS) bs
         -- _ <- ffap "Kleisli tokenize" (length . runMarkupKleisliBS) bs  -- TODO: merge LexerK into Lexer
         _ <- warnError <$> ffap "flatparse tokenize" (tokenize Xml) bs
         pure ()

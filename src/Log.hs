@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -9,44 +9,44 @@
 -- Goal: semantic isomorphism with pi session logs.
 --
 -- A Log is an immutable, append-only sequence of entries forming a tree via parentId.
-
 module Log
   ( -- * Core types
-    EntryId
-  , Log
-  , Entry (..)
-  , Message (..)
-  , ContentItem (..)
-  , Role (..)
-  , Agent (..)
-  
-    -- * Accessors
-  , getId
-  , getParentId
-  
-    -- * Smart constructors
-  , newLog
-  , appendEntry
-  
-    -- * Queries
-  , getEntry
-  , getChildren
-  , getBranch
-  
-    -- * I/O
-  , loadJSONL
-  , fork
-  ) where
+    EntryId,
+    Log,
+    Entry (..),
+    Message (..),
+    ContentItem (..),
+    Role (..),
+    Agent (..),
 
-import Data.Text (Text)
-import qualified Data.Text as T
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BL
-import Data.Aeson (ToJSON, FromJSON, object, (.=), Value(..))
-import Data.Aeson.Types (Parser, (.:), (.:?), withObject)
-import qualified Data.Aeson as JSON
-import GHC.Generics (Generic)
+    -- * Accessors
+    getId,
+    getParentId,
+
+    -- * Smart constructors
+    newLog,
+    appendEntry,
+
+    -- * Queries
+    getEntry,
+    getChildren,
+    getBranch,
+
+    -- * I/O
+    loadJSONL,
+    fork,
+  )
+where
+
 import Control.Applicative ((<|>))
+import Data.Aeson (FromJSON, ToJSON, Value (..), object, (.=))
+import Data.Aeson qualified as JSON
+import Data.Aeson.Types (Parser, withObject, (.:), (.:?))
+import Data.ByteString.Lazy (ByteString)
+import Data.ByteString.Lazy qualified as BL
+import Data.Text (Text)
+import Data.Text qualified as T
+import GHC.Generics (Generic)
 
 -- ---------------------------------------------------------------------------
 -- Core types
@@ -64,49 +64,49 @@ newtype Log = Log [Entry]
 -- | Entry ⟜ one node in the session tree
 data Entry
   = SessionEntry
-      { sessionId :: EntryId
-      , timestamp :: Text
-      , cwd :: FilePath
+      { sessionId :: EntryId,
+        timestamp :: Text,
+        cwd :: FilePath
       }
   | MessageEntry
-      { msgId :: EntryId
-      , msgParentId :: Maybe EntryId
-      , msgTimestamp :: Text
-      , msg :: Message
+      { msgId :: EntryId,
+        msgParentId :: Maybe EntryId,
+        msgTimestamp :: Text,
+        msg :: Message
       }
   | ModelChangeEntry
-      { modelId :: EntryId
-      , modelParentId :: Maybe EntryId
-      , provider :: Text
-      , model :: Text
+      { modelId :: EntryId,
+        modelParentId :: Maybe EntryId,
+        provider :: Text,
+        model :: Text
       }
   | ThinkingLevelEntry
-      { thinkId :: EntryId
-      , thinkParentId :: Maybe EntryId
-      , level :: Text
+      { thinkId :: EntryId,
+        thinkParentId :: Maybe EntryId,
+        level :: Text
       }
   deriving (Show, Eq, Generic, ToJSON)
 
 -- | Message ⟜ user or assistant message with polymorphic content
 data Message = Message
-  { role :: Role
-  , content :: [ContentItem]
+  { role :: Role,
+    content :: [ContentItem]
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
 -- | ContentItem ⟜ text, thinking, tool call, or tool result
 data ContentItem
-  = TextContent { text :: Text }
-  | ThinkingContent { thinking :: Text }
-  | ToolCallContent 
-      { toolCallId :: Text
-      , toolName :: Text
-      , arguments :: JSON.Object
+  = TextContent {text :: Text}
+  | ThinkingContent {thinking :: Text}
+  | ToolCallContent
+      { toolCallId :: Text,
+        toolName :: Text,
+        arguments :: JSON.Object
       }
-  | ToolResultContent 
-      { resultCallId :: Text
-      , resultToolName :: Text
-      , resultContent :: [ContentItem]
+  | ToolResultContent
+      { resultCallId :: Text,
+        resultToolName :: Text,
+        resultContent :: [ContentItem]
       }
   deriving (Show, Eq, Generic, ToJSON)
 
@@ -116,14 +116,16 @@ instance FromJSON ContentItem where
     case typ of
       "text" -> TextContent <$> v .: "text"
       "thinking" -> ThinkingContent <$> v .: "thinking"
-      "toolCall" -> ToolCallContent
-        <$> v .: "id"
-        <*> v .: "name"
-        <*> v .: "arguments"
-      "toolResult" -> ToolResultContent
-        <$> v .: "toolCallId"
-        <*> v .: "toolName"
-        <*> v .: "content"
+      "toolCall" ->
+        ToolCallContent
+          <$> v .: "id"
+          <*> v .: "name"
+          <*> v .: "arguments"
+      "toolResult" ->
+        ToolResultContent
+          <$> v .: "toolCallId"
+          <*> v .: "toolName"
+          <*> v .: "content"
       _ -> fail ("Unknown content type: " ++ typ)
 
 -- | Role ⟜ speaker identity
@@ -172,7 +174,6 @@ newLog = Log []
 -- >>> let log0 = newLog
 -- >>> appendEntry log0 e1 `seq` True
 -- True
---
 appendEntry :: Log -> Entry -> Log
 appendEntry (Log es) e = Log (es ++ [e])
 
@@ -182,14 +183,14 @@ appendEntry (Log es) e = Log (es ++ [e])
 
 -- | Look up entry by ID
 getEntry :: Log -> EntryId -> Maybe Entry
-getEntry (Log es) eid = 
+getEntry (Log es) eid =
   case filter (\e -> getId e == eid) es of
     [e] -> Just e
-    _   -> Nothing
+    _ -> Nothing
 
 -- | Get all children of an entry
 getChildren :: Log -> EntryId -> [Entry]
-getChildren (Log es) eid = 
+getChildren (Log es) eid =
   filter (\e -> getParentId e == Just eid) es
 
 -- | Get path from root to leaf (inclusive)
@@ -209,7 +210,6 @@ getChildren (Log es) eid =
 --
 -- >>> getBranch newLog (Just (T.pack "nonexistent"))
 -- []
---
 getBranch :: Log -> Maybe EntryId -> [Entry]
 getBranch (Log es) leafId = go leafId []
   where
@@ -217,7 +217,7 @@ getBranch (Log es) leafId = go leafId []
     go (Just eid) acc =
       case filter (\e -> getId e == eid) es of
         [e] -> go (getParentId e) (e : acc)
-        _   -> reverse acc
+        _ -> reverse acc
 
 -- ---------------------------------------------------------------------------
 -- Parsing: Load JSONL into Log
@@ -230,7 +230,7 @@ getBranch (Log es) leafId = go leafId []
 loadJSONL :: FilePath -> IO (Either String Log)
 loadJSONL fp = do
   content <- BL.readFile fp
-  let linesBS = BL.split 10 content  -- 10 is '\n' in ASCII
+  let linesBS = BL.split 10 content -- 10 is '\n' in ASCII
       nonEmptyLines = filter (not . BL.null) linesBS
   case mapM (JSON.eitherDecode' :: ByteString -> Either String Entry) nonEmptyLines of
     Left err -> pure (Left err)
@@ -285,13 +285,12 @@ instance FromJSON Entry where
 --
 -- >>> case fork newLog Nothing of { Left _ -> True; Right _ -> False }
 -- True
---
 fork :: Log -> Maybe EntryId -> Either String Log
 fork log leafId =
   let branch = getBranch log leafId
-  in if null branch
-     then Left ("No entries found for leaf: " ++ show leafId)
-     else Right (Log branch)
+   in if null branch
+        then Left ("No entries found for leaf: " ++ show leafId)
+        else Right (Log branch)
 
 -- ---------------------------------------------------------------------------
 -- Agent type (sketch)
@@ -319,8 +318,8 @@ fork log leafId =
 -- >>> --         -- Step the agent on the sub-log
 -- >>> --         let (nextAgent, response) = step someAgent sublog
 -- >>> --         putStrLn $ "Agent responded with " ++ show (length (case response of Log es -> es)) ++ " entries"
--- 
+--
 -- Verify this type matches pi-mono agent behavior.
 -- Test with real session-0.jsonl: load 12 entries → fork to branch → step agent → verify response shape.
-newtype Agent = Agent { step :: Log -> (Agent, Log) }
+newtype Agent = Agent {step :: Log -> (Agent, Log)}
   deriving (Generic)

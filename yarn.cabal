@@ -1,54 +1,62 @@
 cabal-version: 3.0
-name:          yarn
-version:       0.1.0.0
-synopsis:      Free traced monoidal category over any base category
-license:       BSD-3-Clause
-build-type:    Simple
+name: yarn
+version: 0.1.0.0
+synopsis: Free traced monoidal category over any base category
+license: BSD-3-Clause
+build-type: Simple
 
 library
   hs-source-dirs: src
   exposed-modules:
     Hyp
     HypWu
-    Traced
-    Lexer
-    ToHypH
-    Para
     LensS
-    Net
+    Lexer
     Log
+    Net
+    Para
+    ToHypH
+    Traced
+
   build-depends:
-    base       >= 4.18,
-    mtl        >= 2.2,
-    mealy,
+    aeson >=2.0,
+    base >=4.18,
+    bytestring,
     containers,
     deepseq,
-    bytestring,
-    profunctors >= 5.6,
-    transformers >= 0.6,
     harpie,
-    numhask,
     harpie-numhask,
-    aeson       >= 2.0,
-    text        >= 1.2
-  default-language:   GHC2024
+    mealy,
+    mtl >=2.2,
+    numhask,
+    profunctors >=5.6,
+    text >=1.2,
+    transformers >=0.6,
+
+  default-language: GHC2024
   default-extensions:
     UnicodeSyntax
-  ghc-options: -Wall -Wno-unused-imports -Wno-name-shadowing -O2
-  
+
+  ghc-options:
+    -Wall
+    -Wno-unused-imports
+    -Wno-name-shadowing
+    -O2
+
 executable parser-speed
-    default-language:   GHC2024
-    main-is: speed-yarn.hs
-    hs-source-dirs: app
-    build-depends:
-        , base                 >=4.7 && <5
-        , bytestring           >=0.11.3 && <0.13
-        , flatparse            >=0.3.5 && <0.6
-        , html-parse           >=0.2 && <0.3
-        , markup-parse         >= 0.2
-        , optparse-applicative >=0.17 && <0.19
-        , perf                 >=0.13 && <0.14
-        , text                 >=1.2 && <2.2
-        , bifunctors
-        , yarn
-    ghc-options: -O2
+  default-language: GHC2024
+  main-is: speed-yarn.hs
+  hs-source-dirs: app
+  build-depends:
+    base >=4.7 && <5,
+    bifunctors,
+    bytestring >=0.11.3 && <0.13,
+    flatparse >=0.3.5 && <0.6,
+    html-parse >=0.2 && <0.3,
+    markup-parse >=0.2,
+    optparse-applicative >=0.17 && <0.19,
+    perf >=0.13 && <0.14,
+    text >=1.2 && <2.2,
+    yarn,
+
+  ghc-options: -O2
