@@ -9,10 +9,9 @@ library
   hs-source-dirs: src
   exposed-modules:
     Hyp
-    HypH
+    HypWu
     Traced
     Lexer
-    LexerK
     ToHypH
     Para
     LensS
@@ -39,7 +38,7 @@ library
   
 executable parser-speed
     default-language:   GHC2024
-    main-is: parser-speed.hs
+    main-is: speed-yarn.hs
     hs-source-dirs: app
     build-depends:
         , base                 >=4.7 && <5

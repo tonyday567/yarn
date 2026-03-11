@@ -35,7 +35,7 @@ import Control.Category (Category (..))
 import Control.Arrow    (Arrow (..))
 import Data.Profunctor
 import Data.Mealy (Mealy (..), pattern M)
-import HypH       (HypH (..), zipper)
+import Hyp       (HypH (..), zipper)
 import Traced     (Traced (..))
 import Control.Arrow
 

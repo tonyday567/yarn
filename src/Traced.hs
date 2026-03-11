@@ -82,9 +82,9 @@ import Control.Arrow    (Arrow (..), ArrowLoop (..))
 import Data.Profunctor  (Profunctor (..), Costrong (..))
 import Unsafe.Coerce    (unsafeCoerce)  -- GHC-25897
 
+import qualified HypWu
+import HypWu (type (↬) (Hyp))
 import qualified Hyp
-import Hyp (type (↬) (Hyp))
-import qualified HypH
 
 -- ---------------------------------------------------------------------------
 -- Fixed point
@@ -267,9 +267,9 @@ close = run
 -- @Loop@ adds inspectable feedback syntax above the coinductive tower.
 -- @runHyp@ discharges the syntax back into the tower.
 runHyp :: Traced (↬) a b -> (a ↬ b)
-runHyp Pure          = Hyp.rep Prelude.id
+runHyp Pure          = HypWu.rep Prelude.id
 runHyp (Lift h)      = h
-runHyp (Compose g h) = runHyp g Hyp.⊙ runHyp h
+runHyp (Compose g h) = runHyp g HypWu.⊙ runHyp h
 runHyp (Loop p)      = traceHyp (runHyp p)
 
 -- | Close a hyperfunction feedback loop.
@@ -279,8 +279,8 @@ runHyp (Loop p)      = traceHyp (runHyp p)
 -- Evaluate with the terminal continuation, take the Haskell fixed point
 -- over the @c@ channel.
 traceHyp :: (a, c) ↬ (b, c) -> (a ↬ b)
-traceHyp h = Hyp.rep $ \a ->
-  fst $ fix $ \(_, c) -> Hyp.ι h (Hyp (Prelude.const (a, c)))
+traceHyp h = HypWu.rep $ \a ->
+  fst $ fix $ \(_, c) -> HypWu.ι h (Hyp (Prelude.const (a, c)))
 
 -- ---------------------------------------------------------------------------
 -- Bridge: Traced (->) ↔ Hyp
@@ -291,16 +291,16 @@ traceHyp h = Hyp.rep $ \a ->
 -- Initial algebra → final coalgebra.
 -- Same object, different notation, different side of the erasure line.
 toHyp :: Traced (->) a b -> (a ↬ b)
-toHyp Pure          = Hyp.rep Prelude.id
-toHyp (Lift f)      = Hyp.rep f
-toHyp (Compose g h) = toHyp g Hyp.⊙ toHyp h
-toHyp u@(Loop _)    = Hyp.rep (runFn u)
+toHyp Pure          = HypWu.rep Prelude.id
+toHyp (Lift f)      = HypWu.rep f
+toHyp (Compose g h) = toHyp g HypWu.⊙ toHyp h
+toHyp u@(Loop _)    = HypWu.rep (runFn u)
 
 -- | Depth-1 unfolding: @Hyp@ → @Traced (->)@.
 --
 -- Supply the terminal continuation @Hyp (const a)@ to collapse the tower.
 fromHyp :: (a ↬ b) -> Traced (->) a b
-fromHyp h = Lift $ \a -> Hyp.ι h (Hyp (Prelude.const a))
+fromHyp h = Lift $ \a -> HypWu.ι h (Hyp (Prelude.const a))
 
 -- ---------------------------------------------------------------------------
 -- Producers and Consumers — arr = (->)
@@ -411,10 +411,10 @@ untilT cond body a
 --
 -- Contrast with @toHyp@: that collapses @Loop@ via @runFn@ (a lazy fixed
 -- point). @toHypH@ preserves the loop structure corecursively in the tower.
-toHypH :: Traced (->) a b -> HypH.HypH (->) a b
-toHypH Pure          = HypH.rep Prelude.id
-toHypH (Lift f)      = HypH.rep f
-toHypH (Compose g h) = toHypH g `HypH.zipper` toHypH h
+toHypH :: Traced (->) a b -> Hyp.HypH (->) a b
+toHypH Pure          = Hyp.rep Prelude.id
+toHypH (Lift f)      = Hyp.rep f
+toHypH (Compose g h) = toHypH g `Hyp.zipper` toHypH h
 toHypH (Loop p)      = closeHypH (toHypH p)
 
 -- | Close a @HypH (->)@ feedback loop.
@@ -424,8 +424,8 @@ toHypH (Loop p)      = closeHypH (toHypH p)
 -- The @c@ output wire feeds back as @c@ input corecursively.
 -- The lazy fixed point ties @c@ inside the hyperfunction tower.
 -- For productive @c@ (lazy structures), no @fix@ is needed in the caller.
-closeHypH :: HypH.HypH (->) (a, c) (b, c) -> HypH.HypH (->) a b
-closeHypH p = HypH.HypH $ \k ->
-  let (b, _) = HypH.ι p dual
-      dual    = HypH.HypH $ \_ -> (HypH.ι k (closeHypH p), snd (HypH.ι p dual))
+closeHypH :: Hyp.HypH (->) (a, c) (b, c) -> Hyp.HypH (->) a b
+closeHypH p = Hyp.HypH $ \k ->
+  let (b, _) = Hyp.ι p dual
+      dual    = Hyp.HypH $ \_ -> (Hyp.ι k (closeHypH p), snd (Hyp.ι p dual))
   in  b

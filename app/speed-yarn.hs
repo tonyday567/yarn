@@ -18,7 +18,7 @@ import Text.HTML.Parser qualified as HP
 import Text.HTML.Tree qualified as HP
 import Prelude
 import Lexer
-import LexerK
+import Lexer
 
 data RunType = RunDefault | RunReduced | RunMarkup | RunWhitespace | RunWrappedQ | RunIsa | RunByteStringOf | RunMealy deriving (Eq, Show)
 
@@ -80,7 +80,7 @@ main = do
         _ <- ffap "html-parse tokens" HP.parseTokens t
         _ <- ffap "hand-written tokenize" (length . runMarkupLexerBS)    bs
         _ <- ffap "Traced (->) a (State s b) tokenize"        (length . runMarkupStateBS)    bs
-        _ <- ffap "Kleisli tokenize" (length . runMarkupKleisliBS) bs
+        -- _ <- ffap "Kleisli tokenize" (length . runMarkupKleisliBS) bs  -- TODO: merge LexerK into Lexer
         _ <- warnError <$> ffap "flatparse tokenize" (tokenize Xml) bs
         pure ()
     RunMarkup -> do
