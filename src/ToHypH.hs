@@ -147,6 +147,35 @@ loopH p =
 -- toHypH: the catamorphism
 -- ---------------------------------------------------------------------------
 
+-- | Convert a Traced Mealy machine to its corecursive HypH form.
+--
+-- @toHypH :: Traced Mealy a b -> HypH Mealy a b@
+--
+-- This transforms finite syntax (@Traced@) into the coinfinite tower (@HypH@).
+-- The benefit: @Compose@ unfolds to @zipper@ (productive corecursion)
+-- instead of a recursive interpreter with @Rec {}@ in Core.
+--
+-- The input @Traced Mealy a b@ describes a composition of Mealy machines:
+-- @Pure@ (identity), @Lift@ (single machine), @Compose@ (sequence),
+-- or @Loop@ (feedback).
+--
+-- The output @HypH Mealy a b@ is the same computation, but structured
+-- as a corecursive tower where each layer (@ι@) unfolds one step.
+--
+-- Example: a simple identity Mealy compiles and transforms
+--
+-- >>> import qualified Data.Mealy as Mealy
+-- >>> import Traced (Traced(..))
+-- >>> import Hyp (HypH)
+-- >>> let idMealy = Mealy.M id (\s a -> a) id :: Mealy.Mealy Int Int
+-- >>> let traced = Lift idMealy :: Traced Mealy.Mealy Int Int
+-- >>> let result = toHypH traced :: HypH Mealy.Mealy Int Int
+-- >>> -- result is now the corecursive form, ready for ι invocation
+-- >>> True
+-- True
+--
+-- To use the result, invoke it with a dual continuation:
+-- @ι result :: Mealy (HypH Mealy b a) a@
 toHypH :: Traced Mealy a b -> HypH Mealy a b
 toHypH Pure = idH
 toHypH (Lift m) = liftH m
