@@ -6,6 +6,9 @@
 -- Module      : Hyp
 -- Description : Hyperfunctions parameterised over a base arrow
 --
+-- Reference: Kidney & Wu, "Hyperfunctions: Communicating Continuations"
+-- (<https://doisinkidney.com/posts/2025-11-18-hyperfunctions.html>), to be published at POPL 2026.
+--
 -- @Hyp@ from Kidney & Wu is:
 --
 -- @
@@ -56,6 +59,7 @@ module Hyp
 
     -- * Core operations
     zipper,
+    run,
     runFn,
     stream,
     (⊲),
@@ -145,9 +149,16 @@ f ⊙ g = Hyp $ \h -> ι f (g ⊙ h)
 zipper :: (Arrow arr) => Hyp arr b c -> Hyp arr a b -> Hyp arr a c
 zipper f g = Hyp $ ι f . arr (g `zipper`)
 
--- | Run a closed @Hyp (->) a a@. Recovers @Hyp.run@.
+-- | Run a closed hyperfunction to a value (Kidney & Wu style).
+-- 
+-- Ties the knot by invoking the hyperfunction against itself.
+-- Only works for @arr = (->)@ because we need to actually apply the morphism.
+run :: Hyp (->) a a -> a
+run h = ι h (Hyp run)
+
+-- | Alias for @run@. Emphasizes function specialization.
 runFn :: Hyp (->) a a -> a
-runFn h = ι h (Hyp runFn)
+runFn = run
 
 -- | Stream cons. Recovers @Hyp@'s @(⊲)@.
 stream :: (a -> b) -> Hyp (->) a b -> Hyp (->) a b
@@ -285,6 +296,12 @@ closeHyp p = Hyp $ \k ->
 fromHyp :: Hyp (->) a b -> Traced.Traced (->) a b
 fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
 
+-- | Note: Alternative interpreter @runHypWu@ exists for @Traced (↬)@
+-- (Traced parameterized by hyperfunctions, not plain functions). It interprets 
+-- @Traced@ over the hyperfunction arrow back into hyperfunctions, with 
+-- @traceHypWu@ providing feedback knot-tying via @fix@. These are unique and 
+-- unused; preserved in version history.
+--
 -- | Alternative bridge: @Traced@ to @Hyp (->)@ via eager fixed point.
 --
 -- Unlike @toHyp@ which preserves @Loop@ in the hyperfunction tower,

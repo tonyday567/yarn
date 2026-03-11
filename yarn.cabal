@@ -9,7 +9,6 @@ library
   hs-source-dirs: src
   exposed-modules:
     Hyp
-    HypWu
     LensS
     Lexer
     Log
