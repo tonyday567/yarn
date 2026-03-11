@@ -83,6 +83,8 @@ module Hyp
     fromHyp,
     toHypF,
     closeHyp,
+    runHypWu,
+    traceHypWu,
 
     -- * Examples
     zip,
@@ -296,16 +298,39 @@ closeHyp p = Hyp $ \k ->
 fromHyp :: Hyp (->) a b -> Traced.Traced (->) a b
 fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
 
--- | Note: Alternative interpreter @runHypWu@ exists for @Traced (↬)@
--- (Traced parameterized by hyperfunctions, not plain functions). It interprets 
--- @Traced@ over the hyperfunction arrow back into hyperfunctions, with 
--- @traceHypWu@ providing feedback knot-tying via @fix@. These are unique and 
--- unused; preserved in version history.
+-- | Interpret @Traced@ parameterized by hyperfunctions into hyperfunctions.
 --
+-- This is an alternative bridge: whereas @toHyp@ and @toHypF@ interpret 
+-- @Traced (->)@ (Traced over plain functions), @runHypWu@ interprets 
+-- @Traced (Hyp (->))@ (Traced where the arrow itself is hyperfunctions).
+--
+-- This represents a second-order structure: feedback over hyperfunctions.
+-- Currently unused but architecturally interesting.
+runHypWu :: Traced.Traced (Hyp (->)) a b -> Hyp (->) a b
+runHypWu Traced.Pure = rep id
+runHypWu (Traced.Lift h) = h
+runHypWu (Traced.Compose g h) = runHypWu g ⊙ runHypWu h
+runHypWu (Traced.Loop p) = traceHypWu (runHypWu p)
+
+-- | Tie feedback knot in a hyperfunction via lazy fixed point.
+--
+-- Takes a hyperfunction with feedback channel @c@ and closes it by computing
+-- the fixed point with @c@ as both input and output.
+--
+-- @(a, c) ↬ (b, c)  →  a ↬ b@
+--
+-- The fixed point is computed eagerly using Haskell's lazy evaluation;
+-- used by @runHypWu@ to discharge @Loop@.
+traceHypWu :: (a, c) ↬ (b, c) -> Hyp (->) a b
+traceHypWu h = rep $ \a ->
+  fst $ fix $ \(_, c) -> ι h (Hyp (const (a, c)))
+  where
+    fix f = let x = f x in x
+
 -- | Alternative bridge: @Traced@ to @Hyp (->)@ via eager fixed point.
 --
 -- Unlike @toHyp@ which preserves @Loop@ in the hyperfunction tower,
--- @toHypF@ collapses @Loop@ immediately using @runFn@, computing
+-- @toHypF@ collapses @Loop@ immediately using @run@, computing
 -- the fixed point eagerly and lifting the result into hyperfunction.
 toHypF :: Traced.Traced (->) a b -> Hyp (->) a b
 toHypF Traced.Pure = rep id
