@@ -364,7 +364,7 @@ runPipe = closeFn
 -- 55
 fib :: Int -> Int
 fib = runFn $ Loop $ Lift $ \(idx, fibs) ->
-  (fibs !! idx, 0 : 1 : zipWith (+) fibs (tail fibs))
+  (fibs !! idx, 0 : 1 : zipWith (+) fibs (drop 1 fibs))
 
 -- | Iterate until a predicate holds.
 --

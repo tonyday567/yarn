@@ -13,6 +13,8 @@ library
     Traced
     Lexer
     LexerK
+    Log
+  other-modules:
     ToHypH
     Para
     LensS
@@ -28,7 +30,9 @@ library
     transformers >= 0.6,
     harpie,
     numhask,
-    harpie-numhask
+    harpie-numhask,
+    aeson       >= 2.0,
+    text        >= 1.2
   default-language:   GHC2024
   default-extensions:
     UnicodeSyntax

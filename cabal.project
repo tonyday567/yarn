@@ -1,7 +1,9 @@
 packages:
   tcat.cabal
-  ../mealy/mealy.cabal
 
 write-ghc-environment-files: always
-
-allow-newer: *:base
+allow-newer:
+  *:base,
+  *:bytestring,
+  *:transformers,
+  *:template-haskell
