@@ -52,11 +52,14 @@
 -- GHC sees plain @MealyM@ compositions with no recursive interpreter.
 module Hyp
   ( Hyp (..),
+    type (↬),
 
     -- * Core operations
     zipper,
     runFn,
     stream,
+    (⊲),
+    (⊙),
 
     -- * Producer / Consumer
     Producer,
@@ -102,6 +105,30 @@ import Traced qualified
 -- When @arr = (->)@: recovers @Hyp@ exactly.
 -- When @arr = MealyM@: a Mealy machine whose input is the dual hyperfunction.
 newtype Hyp arr a b = Hyp {ι :: arr (Hyp arr b a) b}
+
+-- ---------------------------------------------------------------------------
+-- Specialization to (->)
+-- ---------------------------------------------------------------------------
+
+-- | Type alias: @a ↬ b@ = @Hyp (->) a b@
+-- Recovers the Kidney & Wu notation for hyperfunctions over functions.
+type a ↬ b = Hyp (->) a b
+
+-- | Stream constructor: prepend a function to a hyperfunction.
+--
+-- @(⊲) :: (a -> b) -> (a ↬ b) -> (a ↬ b)@
+-- 
+-- Specialized from @stream@.
+(⊲) :: (a -> b) -> (a ↬ b) -> (a ↬ b)
+f ⊲ h = Hyp (\k -> f (ι k h))
+
+-- | Composition: sequential combination of hyperfunctions.
+--
+-- @(⊙) :: (b ↬ c) -> (a ↬ b) -> (a ↬ c)@
+--
+-- Specialized from @zipper@.
+(⊙) :: (b ↬ c) -> (a ↬ b) -> (a ↬ c)
+f ⊙ g = Hyp $ \h -> ι f (g ⊙ h)
 
 -- ---------------------------------------------------------------------------
 -- Core operations

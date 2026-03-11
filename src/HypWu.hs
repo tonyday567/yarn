@@ -20,6 +20,7 @@ import Control.Monad.Cont
 import Prelude hiding (zip)
 import Traced qualified
 import Hyp qualified
+import Hyp ((⊲), (⊙))
 
 -- Core hyperfunction type: use Hyp's implementation
 type a ↬ b = Hyp.Hyp (->) a b
@@ -27,14 +28,6 @@ type a ↬ b = Hyp.Hyp (->) a b
 -- Constructor pattern: accept either Hyp or bare lambda
 pattern Hyp :: (Hyp.Hyp (->) b a -> b) -> (a ↬ b)
 pattern Hyp f = Hyp.Hyp f
-
--- Stream constructor
-(⊲) :: (a -> b) -> (a ↬ b) -> (a ↬ b)
-f ⊲ h = Hyp (\k -> f (Hyp.ι k h))
-
--- Zipper
-(⊙) :: (b ↬ c) -> (a ↬ b) -> (a ↬ c)
-f ⊙ g = Hyp $ \h -> Hyp.ι f (g ⊙ h)
 
 -- Runner
 run :: a ↬ a -> a
