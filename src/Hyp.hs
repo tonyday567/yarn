@@ -71,6 +71,10 @@ module Hyp
     send,
     send',
 
+    -- * Bridge from Traced
+    toHypH,
+    closeHypH,
+
     -- * Examples
     zip,
 
@@ -85,6 +89,7 @@ import Control.Arrow (Arrow (..))
 import Control.Category (Category (..))
 import Control.Monad.Cont
 import Prelude hiding (id, zip, (.))
+import Traced qualified
 
 -- ---------------------------------------------------------------------------
 -- The type
@@ -204,3 +209,42 @@ rep f = stream f (rep f)
 -- | Invoke @f@ against @g@. Recovers @Hyp.invoke@.
 invoke :: HypH (->) a b -> HypH (->) b a -> b
 invoke f g = runFn (zipper f g)
+
+-- ---------------------------------------------------------------------------
+-- Bridges from Traced
+-- ---------------------------------------------------------------------------
+
+-- | Catamorphism: fold @Traced (->)@ into @HypH (->)@.
+--
+-- This is the fugal extension (Boccali et al., "Bicategories of Automata").
+-- Every @Traced (->)@ description has a canonical corecursive unfolding into
+-- @HypH (->)@. Feedback is handled by @zipper@ rather than a lazy fixed point
+-- — the recursion lives in the types, not in a @fix@ call.
+--
+-- @
+-- Pure     →  rep id          — stateless identity, repeated
+-- Lift f   →  rep f           — stateless f, repeated
+-- Compose  →  zipper          — productive sequential composition
+-- Loop p   →  closeHypH       — close feedback wire corecursively
+-- @
+--
+-- Contrast with @toHyp@: that collapses @Loop@ via @runFn@ (a lazy fixed
+-- point). @toHypH@ preserves the loop structure corecursively in the tower.
+toHypH :: Traced.Traced (->) a b -> HypH (->) a b
+toHypH Traced.Pure = rep id
+toHypH (Traced.Lift f) = rep f
+toHypH (Traced.Compose g h) = toHypH g `zipper` toHypH h
+toHypH (Traced.Loop p) = closeHypH (toHypH p)
+
+-- | Close a @HypH (->)@ feedback loop.
+--
+-- @HypH (->) (a, c) (b, c)  →  HypH (->) a b@
+--
+-- The @c@ output wire feeds back as @c@ input corecursively.
+-- The lazy fixed point ties @c@ inside the hyperfunction tower.
+-- For productive @c@ (lazy structures), no @fix@ is needed in the caller.
+closeHypH :: HypH (->) (a, c) (b, c) -> HypH (->) a b
+closeHypH p = HypH $ \k ->
+  let (b, _) = ι p dual
+      dual = HypH $ \_ -> (ι k (closeHypH p), snd (ι p dual))
+   in b

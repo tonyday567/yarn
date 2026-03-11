@@ -43,7 +43,7 @@ library
     -Wno-name-shadowing
     -O2
 
-executable parser-speed
+executable speed-yarn
   default-language: GHC2024
   main-is: speed-yarn.hs
   hs-source-dirs: app

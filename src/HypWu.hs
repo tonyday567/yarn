@@ -17,6 +17,7 @@ module HypWu where
 -- import Data.Char (chr)
 import Control.Monad.Cont
 import Prelude hiding (zip)
+import Traced qualified
 
 -- Core hyperfunction type
 newtype a ↬ b = Hyp {ι :: (b ↬ a) -> b}
@@ -90,3 +91,42 @@ rep ab = ab ⊲ rep ab
 -- >> ι f g = run (f ⊙ g)
 invoke :: (a ↬ b) -> (b ↬ a) -> b
 invoke f g = run (f ⊙ g)
+
+-- ---------------------------------------------------------------------------
+-- Bridges from Traced
+-- ---------------------------------------------------------------------------
+
+-- | Interpret @Traced (↬)@ into @Hyp@.
+runHyp :: Traced.Traced (↬) a b -> (a ↬ b)
+runHyp Traced.Pure = rep id
+runHyp (Traced.Lift h) = h
+runHyp (Traced.Compose g h) = runHyp g ⊙ runHyp h
+runHyp (Traced.Loop p) = traceHyp (runHyp p)
+
+-- | Close a hyperfunction feedback loop.
+--
+-- @(a, c) ↬ (b, c)  →  a ↬ b@
+--
+-- Evaluate with the terminal continuation, take the Haskell fixed point
+-- over the @c@ channel.
+traceHyp :: (a, c) ↬ (b, c) -> (a ↬ b)
+traceHyp h = rep $ \a ->
+  fst $ fix $ \(_, c) -> ι h (Hyp (const (a, c)))
+  where
+    fix f = let x = f x in x
+
+-- | Catamorphism: fold @Traced (->)@ into @Hyp@.
+--
+-- Initial algebra → final coalgebra.
+-- Same object, different notation, different side of the erasure line.
+toHyp :: Traced.Traced (->) a b -> (a ↬ b)
+toHyp Traced.Pure = rep id
+toHyp (Traced.Lift f) = rep f
+toHyp (Traced.Compose g h) = toHyp g ⊙ toHyp h
+toHyp u@(Traced.Loop _) = rep (Traced.runFn u)
+
+-- | Depth-1 unfolding: @Hyp@ → @Traced (->)@.
+--
+-- Supply the terminal continuation @Hyp (const a)@ to collapse the tower.
+fromHyp :: (a ↬ b) -> Traced.Traced (->) a b
+fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
