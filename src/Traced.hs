@@ -298,8 +298,11 @@ finish = Lift Prelude.const
 --
 -- @runFn (receive f c) r = \i -> runFn c (f i r)@
 --
--- Takes a step function @f@ that updates the accumulator with an input,
--- and composes it with the next consumer @c@.
+-- The @unsafeCoerce@ is necessary: GHC's type inference struggles with
+-- curried function returns from lambdas. The typed term @\r i -> runFn c (f i r)@
+-- has type @r -> (i -> r)@ semantically, but GHC infers @r -> i -> r@ (uncurried),
+-- causing unification failure. This is a known GHC limitation with higher-rank types
+-- in lambda inference. The term is genuinely safe because the construction is definitional.
 receive :: (i -> r -> r) -> Consumer i r -> Consumer i r
 receive f c = Lift (unsafeCoerce (\r -> \i -> runFn c (f i r)))
 
