@@ -50,7 +50,7 @@ module Traced
     -- * Running
     interpret,
     run,
-    closeFn,
+    close,
 
     -- * Examples
   )
@@ -213,8 +213,8 @@ run (Compose g h) = case g of
 run (Knot p) = loop' (run p)
 
 -- | Take the fixed point of a closed @Traced (->)@ loop.
-closeFn :: Traced (->) a a -> a
-closeFn = fix Prelude.. run
+close :: Traced (->) a a -> a
+close = fix Prelude.. run
   where
     fix f = let x = f x in x
 
