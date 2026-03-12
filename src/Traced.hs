@@ -54,16 +54,6 @@ module Traced
     runFn,
     closeFn,
 
-    -- * Producers and Consumers
-    Producer,
-    Consumer,
-    done,
-    emit,
-    finish,
-    receive,
-    mergePipe,
-    runPipe,
-
     -- * Examples
   )
 where
@@ -72,7 +62,6 @@ import Control.Arrow (Arrow, arr, ArrowLoop, loop, first)
 import Control.Category (Category (..))
 import Data.Profunctor
 import Data.Profunctor.Strong (Strong (..))
-import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (id, (.))
 import Prelude qualified
 
@@ -197,6 +186,8 @@ run (Loop p) = loop (run p)
 loop' :: ((a, k) -> (b, k)) -> (a -> b)
 loop' f b = let (k,d) = f (b,d) in k
 
+-- | Alternative knot form via fixed point (equivalent to @loop'@).
+-- Kept as reference for understanding lazy fixed points.
 loop'' :: ((a, k) -> (b, k)) -> (a -> b)
 loop'' f = \a -> fst (fix (\(_,c) -> f (a, c)))
 
@@ -238,74 +229,6 @@ runFn (Loop p) = loop' (runFn p)
 closeFn :: Traced (->) a a -> a
 closeFn = fix Prelude.. runFn
 
--- | Merge a producer and consumer into a closed loop.
---
--- A producer and consumer with matching channel type @o@ form a
--- complete feedback system when composed. The loop variables are
--- sealed existentially.
-mergePipe :: Producer o r -> Consumer o r -> Traced (->) r r
-mergePipe = Compose
-
--- | Execute a closed loop to completion.
---
--- Takes a closed feedback loop and runs it to a final value.
--- Equivalent to @fix . run@.
-runPipe :: Traced (->) r r -> r
-runPipe = closeFn
-
-
--- Producers and Consumers — arr = (->)
---
--- Producer o r = Traced (->) (o -> r) r
---   A morphism that receives a handler for @o@ and produces @r@.
---
--- Consumer i r = Traced (->) r (i -> r)
---   A morphism that receives accumulated @r@ and produces a step function.
---
--- These are the two halves of a Loop, split across Compose:
---
---   connect p c = closeFn (mergePipe p c)
---               = fix (runFn p . runFn c)
---
--- The @o@ channel is the discharged variable.
--- Consumer produces the handler, Producer consumes it, @r@ feeds back.
--- This is the Kidney & Wu ping-pong at the value level.
-
-type Producer o r = Traced (->) (o -> r) r
-
-type Consumer i r = Traced (->) r (i -> r)
-
--- | Base producer: ignore the handler, return @r@.
-done :: r -> Producer o r
-done r = Lift (Prelude.const r)
-
--- | Emit one value, use the handler's response to pick the next producer.
---
--- @runFn (emit o k) h = runFn (k (h o)) h@
---
--- The continuation @k@ is explicit because @Traced (->)@ keeps protocol
--- in values — the next-producer depends on the handler's response,
--- which is only available at runtime inside the function.
--- In @Hyp@, @prod@ carries this for free in the type tower.
-emit :: o -> (r -> Producer o r) -> Producer o r
-emit o k = Lift $ \h -> runFn (k (h o)) h
-
--- | Base consumer: ignore input, preserve accumulated result.
-finish :: Consumer i r
-finish = Lift Prelude.const
-
--- | Prepend one receipt step to a consumer.
---
--- @runFn (receive f c) r = \i -> runFn c (f i r)@
---
--- The @unsafeCoerce@ is necessary: GHC's type inference struggles with
--- curried function returns from lambdas. The typed term @\r i -> runFn c (f i r)@
--- has type @r -> (i -> r)@ semantically, but GHC infers @r -> i -> r@ (uncurried),
--- causing unification failure. This is a known GHC limitation with higher-rank types
--- in lambda inference. The term is genuinely safe because the construction is definitional.
-receive :: (i -> r -> r) -> Consumer i r -> Consumer i r
-receive f c = Lift (unsafeCoerce (\r -> \i -> runFn c (f i r)))
-
 -- * Examples
 
 -- $knot-tying
@@ -329,22 +252,6 @@ receive f c = Lift (unsafeCoerce (\r -> \i -> runFn c (f i r)))
 --
 -- >>> (runFn $ Loop $ Lift $ \(i, fibs) -> (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))) 10
 -- 55
-
--- $producer-consumer
--- = Producer and Consumer Protocol
---
--- Producers emit values; Consumers receive them.
---
--- Example: Base producer returns a value, ignoring the handler
---
--- >>> runFn (done 42 :: Producer Int Int) (\_ -> 0)
--- 42
---
--- Example: Emit one value to handler, then return
---
--- >>> let emit5then0 = emit 5 (const (done 0)) :: Producer Int Int
--- >>> runFn emit5then0 (\x -> x * 2)
--- 0
 --
 
 
