@@ -63,11 +63,6 @@ import Data.Profunctor.Strong (Strong (..))
 import Prelude hiding (id, (.))
 import Prelude qualified
 
--- Fixed point
-
-fix :: (a -> a) -> a
-fix f = let x = f x in x
-
 -- The GADT
 
 -- | The free traced monoidal category over base category @arr@.
@@ -180,6 +175,8 @@ loop' f b = let (k,d) = f (b,d) in k
 -- Kept as reference for understanding lazy fixed points.
 loop'' :: ((a, k) -> (b, k)) -> (a -> b)
 loop'' f = \a -> fst (fix (\(_,c) -> f (a, c)))
+  where
+    fix g = let x = g x in x
 
 cloop' :: ((x, k) -> (y, k)) -> (a -> x) -> (a -> y)
 cloop' p h = \a -> loop' p (h a)
@@ -218,6 +215,8 @@ run (Knot p) = loop' (run p)
 -- | Take the fixed point of a closed @Traced (->)@ loop.
 closeFn :: Traced (->) a a -> a
 closeFn = fix Prelude.. run
+  where
+    fix f = let x = f x in x
 
 -- * Examples
 
