@@ -110,15 +110,13 @@ module Hyp
   )
 where
 
-import Control.Arrow (Arrow (..))
+import Control.Arrow (Arrow, arr)
 import Control.Category (Category (..))
 import Control.Monad.Cont
 import Prelude hiding (id, zip, (.))
 import Traced qualified
 
--- ---------------------------------------------------------------------------
 -- The type
--- ---------------------------------------------------------------------------
 
 -- | Hyperfunction over a base arrow @arr@.
 --
@@ -128,9 +126,7 @@ import Traced qualified
 -- When @arr = MealyM@: a Mealy machine whose input is the dual hyperfunction.
 newtype Hyp arr a b = Hyp {ι :: arr (Hyp arr b a) b}
 
--- ---------------------------------------------------------------------------
 -- Specialization to (->)
--- ---------------------------------------------------------------------------
 
 -- | Type alias: @a ↬ b@ = @Hyp (->) a b@
 -- Recovers the Kidney & Wu notation for hyperfunctions over functions.
@@ -152,9 +148,7 @@ f ⊲ h = Hyp (\k -> f (ι k h))
 (⊙) :: (b ↬ c) -> (a ↬ b) -> (a ↬ c)
 f ⊙ g = Hyp $ \h -> ι f (g ⊙ h)
 
--- ---------------------------------------------------------------------------
 -- Core operations
--- ---------------------------------------------------------------------------
 
 -- | Compose two @Hyp arr@ morphisms. Recovers @Hyp@'s @(⊙)@.
 --
@@ -163,7 +157,7 @@ f ⊙ g = Hyp $ \h -> ι f (g ⊙ h)
 -- Productive: unfolds @ι f@ before each recursive @zipper g h@.
 -- Requires @Arrow arr@ to lift the Haskell corecursion into @arr@.
 zipper :: (Arrow arr) => Hyp arr b c -> Hyp arr a b -> Hyp arr a c
-zipper f g = Hyp $ ι f . arr (g `zipper`)
+zipper f g =  Hyp (ι f . arr (g `zipper`))
 
 -- | Run a closed hyperfunction to a value (Kidney & Wu style).
 -- 
@@ -180,9 +174,7 @@ runFn = run
 stream :: (a -> b) -> Hyp (->) a b -> Hyp (->) a b
 stream f h = Hyp $ \k -> f (ι k h)
 
--- ---------------------------------------------------------------------------
 -- Producer / Consumer / Channel
--- ---------------------------------------------------------------------------
 
 type Producer arr o a = Hyp arr (o -> a) a
 
@@ -198,9 +190,7 @@ prod o p = Hyp $ \q -> ι q p o
 cons :: (i -> a -> a) -> Consumer (->) i a -> Consumer (->) i a
 cons f p = Hyp $ \q -> \i -> f i (ι q p)
 
--- ---------------------------------------------------------------------------
 -- Co: coroutine over Hyp (->) — recovers Hyp's Co
--- ---------------------------------------------------------------------------
 
 -- | Coroutine: a function from a continuation to a channel.
 -- Incomplete replication of Kidney & Wu's coroutine protocol for hyperfunctions.
@@ -240,9 +230,7 @@ send c v = callCC $ \k ->
 send' :: (MonadCont m) => Co x i o m x -> i -> m (o, Co x i o m x)
 send' c v = either undefined id <$> send c v
 
--- ---------------------------------------------------------------------------
 -- Examples
--- ---------------------------------------------------------------------------
 
 -- | Zip two lists using hyperfunctions and foldr. Recovers @Hyp.zip@.
 --
@@ -262,9 +250,7 @@ zip xs ys = ι (foldr xf xb xs) (foldr yf yb ys)
     yb :: Consumer (->) a [(a, b)]
     yb = Hyp $ \_ _ -> []
 
--- ---------------------------------------------------------------------------
 -- Helpers
--- ---------------------------------------------------------------------------
 
 -- | Terminal: ignore continuation, return @a@. Recovers @Hyp.base@.
 base :: a -> Hyp (->) a a
@@ -278,9 +264,7 @@ rep f = stream f (rep f)
 invoke :: Hyp (->) a b -> Hyp (->) b a -> b
 invoke f g = runFn (zipper f g)
 
--- ---------------------------------------------------------------------------
 -- Bridges from Traced
--- ---------------------------------------------------------------------------
 
 -- | Catamorphism: fold @Traced (->)@ into @Hyp (->)@.
 --
@@ -298,9 +282,9 @@ invoke f g = runFn (zipper f g)
 --
 -- Contrast with @toHypWu@: that collapses @Loop@ via @runFn@ (a lazy fixed
 -- point). @toHyp@ preserves the loop structure corecursively in the tower.
-toHyp :: Traced.Traced (->) a b -> Hyp (->) a b
-toHyp Traced.Pure = rep id
-toHyp (Traced.Lift f) = rep f
+toHyp :: (Arrow arr) => Traced.Traced arr a b -> Hyp arr a b
+toHyp Traced.Pure = undefined -- rep id
+toHyp (Traced.Lift f) = undefined -- rep id 
 toHyp (Traced.Compose g h) = toHyp g `zipper` toHyp h
 toHyp (Traced.Loop p) = closeHyp (toHyp p)
 
@@ -311,18 +295,38 @@ toHyp (Traced.Loop p) = closeHyp (toHyp p)
 -- The @c@ output wire feeds back as @c@ input corecursively.
 -- The lazy fixed point ties @c@ inside the hyperfunction tower.
 -- For productive @c@ (lazy structures), no @fix@ is needed in the caller.
-closeHyp :: Hyp (->) (a, c) (b, c) -> Hyp (->) a b
-closeHyp p = Hyp $ \k ->
-  let (b, _) = ι p dual
-      dual = Hyp $ \_ -> (ι k (closeHyp p), snd (ι p dual))
-   in b
+closeHyp :: (Arrow arr) => Hyp arr (a, c) (b, c) -> Hyp arr a b
+closeHyp p = undefined -- Hyp $ \k ->
+  -- let (b, _) = ι p dual
+  --    dual = Hyp $ \_ -> (ι k (closeHyp p), snd (ι p dual))
+  -- in b
 
 -- | Inverse of @toHyp@: unfold @Hyp (->)@ back to @Traced@ syntax.
 --
 -- Supplies the terminal continuation to collapse one tower layer,
 -- returning a @Traced@ that lifts the result.
-fromHyp :: Hyp (->) a b -> Traced.Traced (->) a b
-fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
+fromHyp :: Hyp arr a b -> Traced.Traced arr a b
+fromHyp h = undefined -- Traced.Lift $ \a -> ι h (Hyp (const a))
+
+-- | Close a @Hyp (->)@ feedback loop.
+--
+-- @Hyp (->) (a, c) (b, c)  →  Hyp (->) a b@
+--
+-- The @c@ output wire feeds back as @c@ input corecursively.
+-- The lazy fixed point ties @c@ inside the hyperfunction tower.
+-- For productive @c@ (lazy structures), no @fix@ is needed in the caller.
+closeHypFn :: Hyp (->) (a, c) (b, c) -> Hyp (->) a b
+closeHypFn p = Hyp $ \k ->
+  let (b, _) = ι p dual
+      dual = Hyp $ \_ -> (ι k (closeHyp p), snd (ι p dual))
+  in b
+
+-- | Inverse of @toHyp@: unfold @Hyp (->)@ back to @Traced@ syntax.
+--
+-- Supplies the terminal continuation to collapse one tower layer,
+-- returning a @Traced@ that lifts the result.
+fromHypFn :: Hyp (->) a b -> Traced.Traced (->) a b
+fromHypFn h = Traced.Lift $ \a -> ι h (Hyp (const a))
 
 -- | Interpret @Traced@ parameterized by hyperfunctions into hyperfunctions.
 --

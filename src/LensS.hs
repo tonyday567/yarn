@@ -40,7 +40,6 @@ import Control.Category (Category (..))
 import Data.Profunctor (Profunctor (..), Strong (..))
 import Para (Para (..)) -- ---------------------------------------------------------------------------
 -- Store comonad
--- ---------------------------------------------------------------------------
 import Prelude hiding (id, (.))
 import Prelude qualified
 
@@ -59,17 +58,13 @@ pos (Store _ b) = b
 peek :: Store b a -> b -> a
 peek (Store f _) b = f b
 
--- ---------------------------------------------------------------------------
 -- LensS
--- ---------------------------------------------------------------------------
 
 -- | @LensS a b = a -> Store b a@
 -- Lens from source @a@ to focus @b@.
 newtype LensS a b = LensS {runLensS :: a -> Store b a}
 
--- ---------------------------------------------------------------------------
 -- Category
--- ---------------------------------------------------------------------------
 
 -- | Compose lenses. Middle focus type cancels.
 -- Forward: a -> b -> c
@@ -84,9 +79,7 @@ instance Category LensS where
           Store scb c ->
             Store (sba Prelude.. scb) c
 
--- ---------------------------------------------------------------------------
 -- Constructors
--- ---------------------------------------------------------------------------
 
 -- | Build from get and set.
 mkLensS :: (a -> b) -> (a -> b -> a) -> LensS a b

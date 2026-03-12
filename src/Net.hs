@@ -7,12 +7,10 @@ import Control.Category (Category (..))
 import Harpie.Array qualified as A
 import LensS (LensS (..), Store (..), getS, mkLensS, setS)
 import Para (Para (..), runPara)
-import Traced (Traced (..), run)
+import Traced
 import Prelude hiding (id, (.))
 
--- ---------------------------------------------------------------------------
 -- Parameter record
--- ---------------------------------------------------------------------------
 
 data NetParams a = NetParams
   { w1 :: A.Array a,
@@ -21,9 +19,7 @@ data NetParams a = NetParams
     b2 :: A.Array a
   }
 
--- ---------------------------------------------------------------------------
 -- Layer lenses into NetParams
--- ---------------------------------------------------------------------------
 
 lensW1 :: LensS (NetParams a) (A.Array a)
 lensW1 = mkLensS w1 (\p w -> p {w1 = w})
@@ -37,9 +33,7 @@ lensW2 = mkLensS w2 (\p w -> p {w2 = w})
 lensB2 :: LensS (NetParams a) (A.Array a)
 lensB2 = mkLensS b2 (\p b -> p {b2 = b})
 
--- ---------------------------------------------------------------------------
 -- Forward pass layers
--- ---------------------------------------------------------------------------
 
 linear1 :: (Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
 linear1 = Lift $ Para $ \(p, x) -> A.mult (w1 p) x
@@ -62,9 +56,7 @@ model = bias2 . linear2 . relu1 . bias1 . linear1
 forward :: (Num a, Ord a) => NetParams a -> A.Array a -> A.Array a
 forward p x = runPara (run model) p x
 
--- ---------------------------------------------------------------------------
 -- Backward pass layers
--- ---------------------------------------------------------------------------
 
 linear1B ::
   (Num a, Fractional a) =>
@@ -88,9 +80,7 @@ relu1B = Lift $ Para $ \(_, x) ->
     (\dy -> A.zipWith (\xi dyi -> if xi > 0 then dyi else 0) x dy)
     (fmap (max 0) x)
 
--- ---------------------------------------------------------------------------
 -- Store composition
--- ---------------------------------------------------------------------------
 
 andThen ::
   Para p a (Store b a) ->
@@ -108,9 +98,7 @@ modelB ::
   Para (NetParams a) (A.Array a) (Store (A.Array a) (A.Array a))
 modelB = run linear1B `andThen` run bias1B `andThen` run relu1B
 
--- ---------------------------------------------------------------------------
 -- Test
--- ---------------------------------------------------------------------------
 
 runModelB ::
   (Ord a, Num a, Fractional a) =>
@@ -119,9 +107,7 @@ runModelB p x =
   case unPara modelB (p, x) of
     Store bwd y -> (y, bwd y)
 
--- ---------------------------------------------------------------------------
 -- Weight gradients and parameter updates
--- ---------------------------------------------------------------------------
 --
 -- The Store backward pass gives input gradients.
 -- Weight gradients need the saved input x — captured in the closure.
@@ -182,9 +168,7 @@ step lr p x target =
       p' = paramUpdate bp dOut lr p
    in (loss, p')
 
--- ---------------------------------------------------------------------------
 -- Remaining backward layers
--- ---------------------------------------------------------------------------
 
 bias1BP ::
   (Num a) =>
@@ -259,9 +243,7 @@ bias2BP = Lift $ Para $ \(p, x) ->
     )
     (x + b2 p)
 
--- ---------------------------------------------------------------------------
 -- BackPass andThen — chains input gradients and composes param updates
--- ---------------------------------------------------------------------------
 
 andThenBP ::
   Para p a (Store b (BackPass b a s p)) ->
@@ -290,9 +272,7 @@ andThenBP f g = Para $ \(p, a) ->
             )
             c
 
--- ---------------------------------------------------------------------------
 -- Full model with backward pass
--- ---------------------------------------------------------------------------
 
 modelBP ::
   (Ord a, Num a, Fractional a) =>
@@ -307,9 +287,7 @@ modelBP =
     `andThenBP` run linear2BP
     `andThenBP` run bias2BP
 
--- ---------------------------------------------------------------------------
 -- Full training step
--- ---------------------------------------------------------------------------
 
 stepFull ::
   (Ord a, Num a, Fractional a) =>

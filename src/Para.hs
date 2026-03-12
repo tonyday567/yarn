@@ -40,9 +40,7 @@ import Control.Category (Category (..))
 import Data.Profunctor (Costrong (..), Profunctor (..), Strong (..))
 import Prelude hiding (id, (.))
 
--- ---------------------------------------------------------------------------
 -- The type
--- ---------------------------------------------------------------------------
 
 -- | Parameterised morphism: @(p, a) -> b@.
 newtype Para p a b = Para {unPara :: (p, a) -> b}
@@ -51,47 +49,33 @@ newtype Para p a b = Para {unPara :: (p, a) -> b}
 runPara :: Para p a b -> p -> a -> b
 runPara (Para f) p a = f (p, a)
 
--- ---------------------------------------------------------------------------
 -- Category
--- ---------------------------------------------------------------------------
 
 instance Category (Para p) where
   id = Para snd
   Para g . Para f = Para $ \(p, a) -> g (p, f (p, a))
 
--- ---------------------------------------------------------------------------
--- Arrow
--- ---------------------------------------------------------------------------
-
 instance Arrow (Para p) where
   arr f = Para $ \(_, a) -> f a
   first (Para f) = Para $ \(p, (a, c)) -> (f (p, a), c)
-
--- ---------------------------------------------------------------------------
--- ArrowLoop
--- ---------------------------------------------------------------------------
 
 instance ArrowLoop (Para p) where
   loop (Para f) = Para $ \(p, a) ->
     let (b, c) = f (p, (a, c)) in b
 
--- ---------------------------------------------------------------------------
 -- Profunctor, Strong, Costrong
--- ---------------------------------------------------------------------------
 
 instance Profunctor (Para p) where
   dimap f g (Para m) = Para $ \(p, a) -> g (m (p, f a))
 
 instance Strong (Para p) where
-  first' = first
+  first' (Para f) = Para $ \(p, (a, c)) -> (f (p, a), c)
 
 instance Costrong (Para p) where
   unfirst (Para f) = Para $ \(p, a) ->
     let (b, c) = f (p, (a, c)) in b
 
--- ---------------------------------------------------------------------------
 -- Helpers
--- ---------------------------------------------------------------------------
 
 -- | Lift a plain function, ignoring the parameter.
 liftPara :: (a -> b) -> Para p a b

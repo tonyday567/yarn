@@ -52,7 +52,6 @@ module Traced
     -- * Running
     run,
     runFn,
-    close,
     closeFn,
 
     -- * Producers and Consumers
@@ -66,28 +65,23 @@ module Traced
     runPipe,
 
     -- * Examples
-    fib,
-    untilT,
   )
 where
 
+import Control.Arrow (Arrow, arr, ArrowLoop, loop, first)
 import Control.Category (Category (..))
-import Control.Arrow (Arrow (..), ArrowLoop (..))
-import Data.Profunctor (Costrong (..), Profunctor (..))
+import Data.Profunctor
+import Data.Profunctor.Strong (Strong (..))
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (id, (.))
 import Prelude qualified
 
--- ---------------------------------------------------------------------------
 -- Fixed point
--- ---------------------------------------------------------------------------
 
 fix :: (a -> a) -> a
 fix f = let x = f x in x
 
--- ---------------------------------------------------------------------------
 -- The GADT
--- ---------------------------------------------------------------------------
 
 -- | The free traced monoidal category over base category @arr@.
 --
@@ -120,9 +114,7 @@ data Traced arr a b where
     -- strictly force @c@ so the knot can be tied.
     Traced arr a b
 
--- ---------------------------------------------------------------------------
 -- Smart constructors
--- ---------------------------------------------------------------------------
 
 -- | Lift a base morphism. General form.
 lift :: arr a b -> Traced arr a b
@@ -136,40 +128,22 @@ build = Lift
 untrace :: ((a, c) -> (b, c)) -> Traced (->) a b
 untrace f = Loop (Lift f)
 
--- ---------------------------------------------------------------------------
 -- Category — works for any arr
--- ---------------------------------------------------------------------------
 
 instance Category (Traced arr) where
   id = Pure
   (.) = Compose
 
--- ---------------------------------------------------------------------------
 -- Arrow and ArrowLoop — specialised to arr = (->)
--- ---------------------------------------------------------------------------
 
 instance Arrow (Traced (->)) where
-  arr = Lift
+  arr f = Lift f
+  first p = Compose (Lift (\(a, c) -> (runFn p a, c))) Pure
 
-  -- first has no syntactic form without a product constructor,
-  -- so we evaluate eagerly. Correct semantics; Arrow's first is derived.
-  first p = Lift (\(a, c) -> (runFn p a, c))
+instance Strong (Traced (->)) where
+  first' p = Compose (Lift (\(a, c) -> (runFn p a, c))) Pure
 
--- | The key instance: @loop = Loop@.
---
--- ArrowLoop extension law proof:
---
--- @
--- run (Loop (Lift f)) a
---   = fst $ fix $ \(_,c) -> f (a,c)        [by runFn]
---   = (\b -> fst $ fix $ \(c,d) -> f (b,d)) a   ✓
--- @
-instance ArrowLoop (Traced (->)) where
-  loop p = Loop p
-
--- ---------------------------------------------------------------------------
 -- Profunctor, Functor, Costrong — specialised to arr = (->)
--- ---------------------------------------------------------------------------
 
 instance Functor (Traced (->) a) where
   fmap f p = Compose (Lift f) p
@@ -186,9 +160,51 @@ instance Costrong (Traced (->)) where
     where
       sw (a, b) = (b, a)
 
--- ---------------------------------------------------------------------------
--- Running: arr = (->) with Mendler-style normaliser
--- ---------------------------------------------------------------------------
+-- Running: general Category + ArrowLoop
+
+-- | Interpret @Traced arr@ into @arr@.
+--
+-- Implements the sliding law: when Loop appears on the left of Compose,
+-- it slides through and absorbs the right side. This requires pattern
+-- matching on the left argument to detect Loop and reassociate Compose.
+--
+-- The naive @run g . run h@ is incorrect because it does not implement
+-- the sliding transformation: loops must be able to absorb compositions.
+--
+-- The sliding law: feedback variables slide left through Compose chains,
+-- absorbing the right side via the Costrong structure. The Loop constructor
+-- is the profunctor operation Costrong.unfirst, and the sliding works by
+-- lifting the right morphism to work on the feedback pair via @first@.
+--
+-- Each constructor dispatches to the corresponding @arr@ operation:
+--
+-- @
+-- Pure     →  id
+-- Lift f   →  f
+-- Compose  →  pattern match on left to handle sliding
+-- Loop p   →  loop (run p)
+-- @
+run :: (Arrow arr, ArrowLoop arr) => Traced arr a b -> arr a b
+run Pure = id
+run (Lift f) = f
+run (Compose g h) = case g of
+  Pure -> run h
+  Lift f -> f . run h
+  Compose g1 g2 -> run (Compose g1 (Compose g2 h))     -- reassociate left-nested
+  Loop p -> cloop (run p) (run h)
+run (Loop p) = loop (run p)
+
+loop' :: ((a, k) -> (b, k)) -> (a -> b)
+loop' f b = let (k,d) = f (b,d) in k
+
+loop'' :: ((a, k) -> (b, k)) -> (a -> b)
+loop'' f = \a -> fst (fix (\(_,c) -> f (a, c)))
+
+cloop' :: ((x, k) -> (y, k)) -> (a -> x) -> (a -> y)
+cloop' p h = \a -> loop' p (h a)
+
+cloop :: (Arrow arr, ArrowLoop arr) => arr (x, k) (y, k) -> arr a x -> arr a y
+cloop p h = loop (p . first h)
 
 -- | Evaluate @Traced (->)@ to a Haskell function.
 --
@@ -215,58 +231,30 @@ runFn (Compose g h) = case g of
   Pure -> runFn h
   Lift f -> f Prelude.. runFn h
   Compose g1 g2 -> runFn (Compose g1 (Compose g2 h))
-  Loop p -> \a -> fst $ fix $ \t -> runFn p (runFn h a, snd t)
-runFn (Loop p) = \a -> fst $ fix $ \t -> runFn p (a, snd t)
+  Loop p -> cloop' (runFn p) (runFn h)
+runFn (Loop p) = loop' (runFn p)
 
 -- | Take the fixed point of a closed @Traced (->)@ loop.
 closeFn :: Traced (->) a a -> a
 closeFn = fix Prelude.. runFn
 
--- ---------------------------------------------------------------------------
--- Running: general Category + ArrowLoop
--- ---------------------------------------------------------------------------
+-- | Merge a producer and consumer into a closed loop.
+--
+-- A producer and consumer with matching channel type @o@ form a
+-- complete feedback system when composed. The loop variables are
+-- sealed existentially.
+mergePipe :: Producer o r -> Consumer o r -> Traced (->) r r
+mergePipe = Compose
 
--- | Interpret @Traced arr@ into @arr@.
+-- | Execute a closed loop to completion.
 --
--- Implements the sliding law: when Loop appears on the left of Compose,
--- it slides through and absorbs the right side. This requires pattern
--- matching on the left argument to detect Loop and reassociate Compose.
---
--- The naive @run g . run h@ is incorrect because it does not implement
--- the sliding transformation: loops must be able to absorb compositions.
---
--- The sliding law: feedback variables slide left through Compose chains,
--- absorbing the right side via the Costrong structure. The Loop constructor
--- is the profunctor operation Costrong.unfirst, and the sliding works by
--- lifting the right morphism to work on the feedback pair via @first@.
---
--- Each constructor dispatches to the corresponding @arr@ operation:
---
--- @
--- Pure     →  id
--- Lift f   →  f
--- Compose  →  pattern match on left to handle sliding
--- Loop p   →  loop (run p)
--- @
-run :: (Category arr, Arrow arr, ArrowLoop arr) => Traced arr a b -> arr a b
-run Pure = id
-run (Lift f) = f
-run (Compose g h) = case g of
-  Pure -> run h
-  Lift f -> f . run h
-  Compose g1 g2 -> run (Compose g1 (Compose g2 h))     -- reassociate left-nested
-  Loop p -> loop (run p . first (run h))                -- sliding: Loop absorbs h via Costrong
-run (Loop p) = loop (run p)
-
--- | Synonym for @run@ at @a = b@. The loop closes in @arr@.
-close :: (Category arr, ArrowLoop arr) => Traced arr a a -> arr a a
-close = run
+-- Takes a closed feedback loop and runs it to a final value.
+-- Equivalent to @fix . run@.
+runPipe :: Traced (->) r r -> r
+runPipe = closeFn
 
 
-
--- ---------------------------------------------------------------------------
 -- Producers and Consumers — arr = (->)
--- ---------------------------------------------------------------------------
 --
 -- Producer o r = Traced (->) (o -> r) r
 --   A morphism that receives a handler for @o@ and produces @r@.
@@ -310,55 +298,52 @@ finish = Lift Prelude.const
 --
 -- @runFn (receive f c) r = \i -> runFn c (f i r)@
 --
--- The @unsafeCoerce@ here is justified: we construct a curried function
--- @\r -> \i -> runFn c (f i r) :: r -> (i -> r)@ which is definitely
--- type-safe, but GHC's bidirectional type inference gets confused by the
--- scoped type variable @i@ in the lambda vs the type parameter @i@ in
--- the signature. The unsafeCoerce is a bridge across this inference gap,
--- not a fundamental type coercion.
+-- Takes a step function @f@ that updates the accumulator with an input,
+-- and composes it with the next consumer @c@.
 receive :: (i -> r -> r) -> Consumer i r -> Consumer i r
-receive f c = Lift (unsafeCoerce (\r i -> runFn c (f i r)))
+receive f c = Lift (unsafeCoerce (\r -> \i -> runFn c (f i r)))
 
--- | Compose producer and consumer into a closed pipeline.
-mergePipe :: Producer o r -> Consumer o r -> Traced (->) r r
-mergePipe = Compose
+-- * Examples
 
--- | Run a closed pipeline to its fixed point.
-runPipe :: Traced (->) r r -> r
-runPipe = closeFn
-
--- ---------------------------------------------------------------------------
--- Examples
--- ---------------------------------------------------------------------------
-
--- | Fibonacci via productive corecursion.
+-- $knot-tying
+-- = Knot-Tying with Loop
 --
--- The feedback wire @fibs@ carries the infinite list as its own lazy fixed point:
+-- A @Loop@ ties a knot: the feedback channel carries a value that depends on itself.
+-- Haskell's laziness makes this productive.
 --
--- @fibs = 0 : scanl (+) 1 fibs@
+-- Example: Fibonacci sequence via corecursion.
 --
--- This is a genuine @Loop@: @fibs@ is defined in terms of itself.
--- Laziness makes the fixed point productive — @fibs !! n@ forces only
--- the first @n@ elements.
+-- @
+-- fib idx = runFn $ Loop $ Lift $ \\(i, fibs) -> 
+--           (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))
+-- @
 --
--- Example (disabled doctest pending investigation):
+-- The knot: @fibs@ is both the input and the infinite sequence generated from itself.
+-- The knot is tied in the pattern match: the second component of the output
+-- becomes the input for the next iteration, creating recursive self-reference.
 --
--- > fib 10
+-- Computing Fibonacci values:
+--
+-- >>> (runFn $ Loop $ Lift $ \(i, fibs) -> (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))) 10
 -- 55
-fib :: Int -> Int
-fib = runFn $ Loop $ Lift $ \(idx, fibs) ->
-  (fibs !! idx, 0 : 1 : zipWith (+) fibs (drop 1 fibs))
 
--- | Iterate until a predicate holds.
+-- $producer-consumer
+-- = Producer and Consumer Protocol
 --
--- This is sequential iteration, not a simultaneous fixed point,
--- so it does not use Loop. Direct recursion is correct.
+-- Producers emit values; Consumers receive them.
 --
--- >>> untilT (> 100) (*2) 1
--- 128
-untilT :: (a -> Bool) -> (a -> a) -> a -> a
-untilT cond body a
-  | cond a = a
-  | otherwise = untilT cond body (body a)
+-- Example: Base producer returns a value, ignoring the handler
+--
+-- >>> runFn (done 42 :: Producer Int Int) (\_ -> 0)
+-- 42
+--
+-- Example: Emit one value to handler, then return
+--
+-- >>> let emit5then0 = emit 5 (const (done 0)) :: Producer Int Int
+-- >>> runFn emit5then0 (\x -> x * 2)
+-- 0
+--
+
+
 
 

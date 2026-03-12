@@ -30,30 +30,21 @@ module Traced.Mealy
   )
 where
 
-import Control.Arrow
-import Control.Arrow (Arrow (..))
+import Control.Arrow (Arrow, arr, first)
 import Control.Category (Category (..))
 import Data.Mealy (Mealy (..), pattern M)
 import Data.Profunctor
 import Hyp (Hyp (..), zipper)
-import Traced (Traced (..))
+import Traced
 import Prelude hiding (id, (.))
 
 instance Arrow Mealy where
   arr f = M (\a -> f a) (\_ a -> f a) id
-  first (M i s e) =
-    M
-      (\(a, c) -> (i a, c))
-      (\(sa, c) (a, _) -> (s sa a, c))
-      (\(sa, c) -> (e sa, c))
-
--- ---------------------------------------------------------------------------
--- idH: identity
--- ---------------------------------------------------------------------------
-
--- | Identity Hyp Mealy.
--- ι idH :: Mealy (Hyp Mealy a a) a
--- Run the dual's ι against idH to get the a, return it.
+  first = first'
+  
+--- | Identity Hyp Mealy.
+--- ι idH :: Mealy (Hyp Mealy a a) a
+--- Run the dual's ι against idH to get the a, return it.
 idH :: Hyp Mealy a a
 idH =
   Hyp $
@@ -70,9 +61,7 @@ idH =
     runDual h cont = case ι h of
       M di _ de -> de (di cont)
 
--- ---------------------------------------------------------------------------
 -- liftH: lift a Mealy into Hyp Mealy
--- ---------------------------------------------------------------------------
 
 -- | Lift m :: Mealy a b into Hyp Mealy a b.
 -- The dual h :: Hyp Mealy b a provides a's.
@@ -96,9 +85,7 @@ liftH m = case m of
     getA h cont = case ι h of
       M di _ de -> de (di cont)
 
--- ---------------------------------------------------------------------------
 -- loopH: feedback in Hyp Mealy
--- ---------------------------------------------------------------------------
 
 -- | Close feedback wire c.
 -- Lazy knot — same structure as Costrong.unfirst.
@@ -143,9 +130,7 @@ loopH p =
           (\_ _ -> (a, c))
           id
 
--- ---------------------------------------------------------------------------
 -- fromMealy: the catamorphism
--- ---------------------------------------------------------------------------
 
 -- | Convert a Traced Mealy machine to its corecursive Hyp form.
 --
@@ -176,10 +161,10 @@ loopH p =
 --
 -- To use the result, invoke it with a dual continuation:
 -- @ι result :: Mealy (Hyp Mealy b a) a@
+-- FIXME: wont pass the sliding law?
 fromMealy :: Traced Mealy a b -> Hyp Mealy a b
 fromMealy Pure = idH
 fromMealy (Lift m) = liftH m
 fromMealy (Compose g h) = fromMealy g `zipper` fromMealy h
 fromMealy (Loop p) = loopH (fromMealy p)
 
-runHyp h = ι h (Hyp runHyp)

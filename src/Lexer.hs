@@ -43,13 +43,11 @@ import Data.Maybe (mapMaybe)
 import Data.Word (Word8)
 import GHC.Exts (lazy)
 import GHC.Generics (Generic)
-import Traced (Traced (..), run)
+import Traced
 import Prelude hiding (id, (.))
 import Prelude qualified
 
--- ---------------------------------------------------------------------------
 -- Helpers
--- ---------------------------------------------------------------------------
 
 -- | Strict unboxed pair of byte and index.
 -- Using a newtype with UNPACK instead of (Word8, Int) avoids a heap
@@ -65,9 +63,7 @@ toLowerW w
   | w >= 65 && w <= 90 = w + 32
   | otherwise = w
 
--- ---------------------------------------------------------------------------
 -- Word lexer — direct ByteString, offset tracking, zero copy
--- ---------------------------------------------------------------------------
 
 -- | Run word lexer directly over a ByteString.
 -- No [Word8] allocation. unsafeIndex for input, unsafeSlice for output.
@@ -115,9 +111,7 @@ wordFreqBS bs = go 0 False 0 []
       | word == w = (w, c + 1) : rest
       | otherwise = (w, c) : insertFreq word rest
 
--- ---------------------------------------------------------------------------
 -- Markup types
--- ---------------------------------------------------------------------------
 
 data MarkupCtx
   = InContent
@@ -174,9 +168,7 @@ classifyByte _ w = case w of
   63 -> BQuestion
   _ -> BAlpha w
 
--- ---------------------------------------------------------------------------
 -- Markup accumulator — offset tracking
--- ---------------------------------------------------------------------------
 
 -- | Accumulator: track start offset and length of current token being built.
 -- Never holds a [Word8]. Emit is a slice of the original ByteString.
@@ -233,9 +225,7 @@ accumStep (AccState !s !l !ctx) bc !i = case (ctx, bc) of
   _ ->
     (Nothing, AccState (if l == 0 then i else s) (l + 1) ctx)
 
--- ---------------------------------------------------------------------------
 -- Markup runner — direct ByteString, zero copy
--- ---------------------------------------------------------------------------
 
 -- | Run markup lexer directly over a ByteString.
 -- Context state machine driven byte by byte via unsafeIndex.
@@ -259,14 +249,10 @@ runMarkupLexerBS bs = go 0 (AccState 0 0 InContent)
                           else con (BSU.unsafeTake l (BSU.unsafeDrop s bs))
                    in tok : go (i + 1) acc'
 
--- ---------------------------------------------------------------------------
 -- Markup lexer as Traced MealyM
 -- (for composition; uses [Word8] accumulator internally)
--- ---------------------------------------------------------------------------
 
--- ---------------------------------------------------------------------------
 -- Offset-tracking accumulator for Traced MealyM pipeline
--- ---------------------------------------------------------------------------
 --
 -- Input to the pipeline: (Word8, Int) — byte paired with its index.
 -- Index flows through all stages so accumulator can track (start, len).
@@ -386,9 +372,7 @@ mAccumStep (MAccState buf ctx) (bc, _) = case (ctx, bc) of
   (InClose, _) -> (Nothing, MAccState (classW bc : buf) InClose)
   _ -> (Nothing, MAccState (classW bc : buf) ctx)
 
--- ---------------------------------------------------------------------------
 -- Traced (->) a (OAccState -> (Maybe token, OAccState))
--- ---------------------------------------------------------------------------
 --
 -- Output type is State OAccState (Maybe token).
 -- OAccState carries MarkupCtx — no feedback wire, no Loop, no knot.

@@ -48,9 +48,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic)
 
--- ---------------------------------------------------------------------------
 -- Core types
--- ---------------------------------------------------------------------------
 
 -- | Entry identifier — short UUID string from pi sessions
 type EntryId = Text
@@ -138,9 +136,7 @@ instance FromJSON Role where
   parseJSON (JSON.String "toolResult") = pure ToolResult
   parseJSON v = fail ("Unknown role: " ++ show v)
 
--- ---------------------------------------------------------------------------
 -- Accessors
--- ---------------------------------------------------------------------------
 
 -- | Extract entry ID from any Entry
 getId :: Entry -> EntryId
@@ -156,9 +152,7 @@ getParentId (MessageEntry _ p _ _) = p
 getParentId (ModelChangeEntry _ p _ _) = p
 getParentId (ThinkingLevelEntry _ p _) = p
 
--- ---------------------------------------------------------------------------
 -- Smart constructors
--- ---------------------------------------------------------------------------
 
 -- | Create empty log
 --
@@ -177,9 +171,7 @@ newLog = Log []
 appendEntry :: Log -> Entry -> Log
 appendEntry (Log es) e = Log (es ++ [e])
 
--- ---------------------------------------------------------------------------
 -- Queries
--- ---------------------------------------------------------------------------
 
 -- | Look up entry by ID
 getEntry :: Log -> EntryId -> Maybe Entry
@@ -219,9 +211,7 @@ getBranch (Log es) leafId = go leafId []
         [e] -> go (getParentId e) (e : acc)
         _ -> reverse acc
 
--- ---------------------------------------------------------------------------
 -- Parsing: Load JSONL into Log
--- ---------------------------------------------------------------------------
 
 -- | Load JSONL file line-by-line, parse each as Entry, construct Log
 --
@@ -265,9 +255,7 @@ instance FromJSON Entry where
         pure (ThinkingLevelEntry tid tpid lvl)
       _ -> fail ("Unknown entry type: " ++ typ)
 
--- ---------------------------------------------------------------------------
 -- Fork: slice a Log from one entry to another
--- ---------------------------------------------------------------------------
 
 -- | Fork a Log: extract path from root to a leaf (creates new sub-conversation)
 --
@@ -292,15 +280,11 @@ fork log leafId =
         then Left ("No entries found for leaf: " ++ show leafId)
         else Right (Log branch)
 
--- ---------------------------------------------------------------------------
 -- Agent type (sketch)
--- ---------------------------------------------------------------------------
 
 -- | Agent ⟜ reads a Log window, returns response Log + next Agent state
 --
 -- This is the core agentic recursion:
--- - Input: Log (immutable conversation history)
--- - Output: (Agent, Log) — next agent + response entries to append
 --
 -- The Agent is its own continuation (fixed point).
 --
