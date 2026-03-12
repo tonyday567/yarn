@@ -54,7 +54,7 @@ model :: (Num a, Ord a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
 model = bias2 . linear2 . relu1 . bias1 . linear1
 
 forward :: (Num a, Ord a) => NetParams a -> A.Array a -> A.Array a
-forward p x = runPara (run model) p x
+forward p x = runPara (interpret model) p x
 
 -- Backward pass layers
 
@@ -96,7 +96,7 @@ andThen f g = Para $ \(p, a) ->
 modelB ::
   (Ord a, Num a, Fractional a) =>
   Para (NetParams a) (A.Array a) (Store (A.Array a) (A.Array a))
-modelB = run linear1B `andThen` run bias1B `andThen` run relu1B
+modelB = interpret linear1B `andThen` interpret bias1B `andThen` interpret relu1B
 
 -- Test
 
@@ -163,7 +163,7 @@ step ::
 step lr p x target =
   let y = forward p x
       (loss, dOut) = mseLoss y target
-      Store mkBP _ = unPara (run linear1BP) (p, x)
+      Store mkBP _ = unPara (interpret linear1BP) (p, x)
       bp = mkBP dOut
       p' = paramUpdate bp dOut lr p
    in (loss, p')
@@ -281,11 +281,11 @@ modelBP ::
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
 modelBP =
-  run linear1BP
-    `andThenBP` run bias1BP
-    `andThenBP` run relu1BP
-    `andThenBP` run linear2BP
-    `andThenBP` run bias2BP
+  interpret linear1BP
+    `andThenBP` interpret bias1BP
+    `andThenBP` interpret relu1BP
+    `andThenBP` interpret linear2BP
+    `andThenBP` interpret bias2BP
 
 -- Full training step
 

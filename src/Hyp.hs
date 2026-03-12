@@ -366,4 +366,4 @@ toHypF :: Traced.Traced (->) a b -> Hyp (->) a b
 toHypF Traced.Pure = rep id
 toHypF (Traced.Lift f) = rep f
 toHypF (Traced.Compose g h) = toHypF g `zipper` toHypF h
-toHypF u@(Traced.Loop _) = rep (Traced.runFn u)
+toHypF u@(Traced.Loop _) = rep (Traced.run u)

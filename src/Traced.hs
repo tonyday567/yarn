@@ -50,8 +50,8 @@ module Traced
     untrace,
 
     -- * Running
+    interpret,
     run,
-    runFn,
     closeFn,
 
     -- * Examples
@@ -127,10 +127,10 @@ instance Category (Traced arr) where
 
 instance Arrow (Traced (->)) where
   arr f = Lift f
-  first p = Compose (Lift (\(a, c) -> (runFn p a, c))) Pure
+  first p = Compose (Lift (\(a, c) -> (run p a, c))) Pure
 
 instance Strong (Traced (->)) where
-  first' p = Compose (Lift (\(a, c) -> (runFn p a, c))) Pure
+  first' p = Compose (Lift (\(a, c) -> (run p a, c))) Pure
 
 -- Profunctor, Functor, Costrong — specialised to arr = (->)
 
@@ -157,7 +157,7 @@ instance Costrong (Traced (->)) where
 -- it slides through and absorbs the right side. This requires pattern
 -- matching on the left argument to detect Loop and reassociate Compose.
 --
--- The naive @run g . run h@ is incorrect because it does not implement
+-- The naive @interpret g . interpret h@ is incorrect because it does not implement
 -- the sliding transformation: loops must be able to absorb compositions.
 --
 -- The sliding law: feedback variables slide left through Compose chains,
@@ -171,17 +171,17 @@ instance Costrong (Traced (->)) where
 -- Pure     →  id
 -- Lift f   →  f
 -- Compose  →  pattern match on left to handle sliding
--- Loop p   →  loop (run p)
+-- Loop p   →  loop (interpret p)
 -- @
-run :: (Arrow arr, ArrowLoop arr) => Traced arr a b -> arr a b
-run Pure = id
-run (Lift f) = f
-run (Compose g h) = case g of
-  Pure -> run h
-  Lift f -> f . run h
-  Compose g1 g2 -> run (Compose g1 (Compose g2 h))     -- reassociate left-nested
-  Loop p -> cloop (run p) (run h)
-run (Loop p) = loop (run p)
+interpret :: (Arrow arr, ArrowLoop arr) => Traced arr a b -> arr a b
+interpret Pure = id
+interpret (Lift f) = f
+interpret (Compose g h) = case g of
+  Pure -> interpret h
+  Lift f -> f . interpret h
+  Compose g1 g2 -> interpret (Compose g1 (Compose g2 h))     -- reassociate left-nested
+  Loop p -> cloop (interpret p) (interpret h)
+interpret (Loop p) = loop (interpret p)
 
 loop' :: ((a, k) -> (b, k)) -> (a -> b)
 loop' f b = let (k,d) = f (b,d) in k
@@ -207,7 +207,7 @@ cloop p h = loop (p . first h)
 -- Example: Simple composition
 --
 -- >>> let f = Compose (Lift (+ 1)) (Lift (* 2))
--- >>> runFn f 5
+-- >>> run f 5
 -- 11
 --
 -- Example: Loop and fixed point (feedback loop)
@@ -215,19 +215,19 @@ cloop p h = loop (p . first h)
 -- See @test-traced-fn-simple.hs@ for integration tests of Loop behavior
 -- with identity and fixed-point functions. The core pattern:
 -- Loop absorbs the feedback wire via Mendler normalisation.
-runFn :: Traced (->) a b -> (a -> b)
-runFn Pure = Prelude.id
-runFn (Lift f) = f
-runFn (Compose g h) = case g of
-  Pure -> runFn h
-  Lift f -> f Prelude.. runFn h
-  Compose g1 g2 -> runFn (Compose g1 (Compose g2 h))
-  Loop p -> cloop' (runFn p) (runFn h)
-runFn (Loop p) = loop' (runFn p)
+run :: Traced (->) a b -> (a -> b)
+run Pure = Prelude.id
+run (Lift f) = f
+run (Compose g h) = case g of
+  Pure -> run h
+  Lift f -> f Prelude.. run h
+  Compose g1 g2 -> run (Compose g1 (Compose g2 h))
+  Loop p -> cloop' (run p) (run h)
+run (Loop p) = loop' (run p)
 
 -- | Take the fixed point of a closed @Traced (->)@ loop.
 closeFn :: Traced (->) a a -> a
-closeFn = fix Prelude.. runFn
+closeFn = fix Prelude.. run
 
 -- * Examples
 
@@ -250,7 +250,7 @@ closeFn = fix Prelude.. runFn
 --
 -- Computing Fibonacci values:
 --
--- >>> (runFn $ Loop $ Lift $ \(i, fibs) -> (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))) 10
+-- >>> (run $ Loop $ Lift $ \(i, fibs) -> (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))) 10
 -- 55
 --
 
