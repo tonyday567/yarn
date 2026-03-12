@@ -3,36 +3,21 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Log ⟜ Ground truth session structure from pi-mono
---
--- Mirrors ~/.pi/agent/sessions/ JSONL format.
--- Goal: semantic isomorphism with pi session logs.
---
--- A Log is an immutable, append-only sequence of entries forming a tree via parentId.
 module Log
-  ( -- * Core types
-    EntryId,
+  ( EntryId,
     Log,
     Entry (..),
     Message (..),
     ContentItem (..),
     Role (..),
     Agent (..),
-
-    -- * Accessors
     getId,
     getParentId,
-
-    -- * Smart constructors
     newLog,
     appendEntry,
-
-    -- * Queries
     getEntry,
     getChildren,
     getBranch,
-
-    -- * I/O
     loadJSONL,
     fork,
   )
@@ -48,13 +33,10 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic)
 
--- Core types
-
 -- | Entry identifier — short UUID string from pi sessions
 type EntryId = Text
 
 -- | Log ⟜ immutable sequence of entries
--- Forms a tree via parentId pointers.
 newtype Log = Log [Entry]
   deriving stock (Show, Eq, Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -136,8 +118,6 @@ instance FromJSON Role where
   parseJSON (JSON.String "toolResult") = pure ToolResult
   parseJSON v = fail ("Unknown role: " ++ show v)
 
--- Accessors
-
 -- | Extract entry ID from any Entry
 getId :: Entry -> EntryId
 getId (SessionEntry eid _ _) = eid
@@ -151,8 +131,6 @@ getParentId (SessionEntry _ _ _) = Nothing
 getParentId (MessageEntry _ p _ _) = p
 getParentId (ModelChangeEntry _ p _ _) = p
 getParentId (ThinkingLevelEntry _ p _) = p
-
--- Smart constructors
 
 -- | Create empty log
 --
@@ -171,8 +149,6 @@ newLog = Log []
 appendEntry :: Log -> Entry -> Log
 appendEntry (Log es) e = Log (es ++ [e])
 
--- Queries
-
 -- | Look up entry by ID
 getEntry :: Log -> EntryId -> Maybe Entry
 getEntry (Log es) eid =
@@ -187,18 +163,11 @@ getChildren (Log es) eid =
 
 -- | Get path from root to leaf (inclusive)
 --
--- Reconstructs the chain from root session to specified leaf entry.
--- Traverses parentId pointers backward, building the branch.
---
--- Example: Path from root to a message (linear chain)
---
 -- >>> import qualified Data.Text as T
 -- >>> let s = SessionEntry (T.pack "session-1") (T.pack "2026-01-01T00:00:00Z") "/home/user"
 -- >>> let m = MessageEntry (T.pack "msg-1") (Just (T.pack "session-1")) (T.pack "2026-01-01T00:01:00Z") (Message User [])
 -- >>> getBranch newLog (Just (T.pack "msg-1"))
 -- []
---
--- Example: No leaf found (returns empty)
 --
 -- >>> getBranch newLog (Just (T.pack "nonexistent"))
 -- []
@@ -211,16 +180,11 @@ getBranch (Log es) leafId = go leafId []
         [e] -> go (getParentId e) (e : acc)
         _ -> reverse acc
 
--- Parsing: Load JSONL into Log
-
 -- | Load JSONL file line-by-line, parse each as Entry, construct Log
---
--- Parses session JSONL format from pi-mono sessions.
--- Each line is a JSON object representing one entry (session, message, model_change, thinking_level_change).
 loadJSONL :: FilePath -> IO (Either String Log)
 loadJSONL fp = do
   content <- BL.readFile fp
-  let linesBS = BL.split 10 content -- 10 is '\n' in ASCII
+  let linesBS = BL.split 10 content
       nonEmptyLines = filter (not . BL.null) linesBS
   case mapM (JSON.eitherDecode' :: ByteString -> Either String Entry) nonEmptyLines of
     Left err -> pure (Left err)
@@ -255,21 +219,12 @@ instance FromJSON Entry where
         pure (ThinkingLevelEntry tid tpid lvl)
       _ -> fail ("Unknown entry type: " ++ typ)
 
--- Fork: slice a Log from one entry to another
-
 -- | Fork a Log: extract path from root to a leaf (creates new sub-conversation)
---
--- Useful for: spinning sub-agents on a branch, resuming from a checkpoint.
--- Verifies path continuity by checking parentId chain reconstruction.
---
--- Example: Fork with no match returns error
 --
 -- >>> import qualified Data.Text as T
 -- >>> let err = fork newLog (Just (T.pack "missing"))
 -- >>> case err of { Left _ -> True; Right _ -> False }
 -- True
---
--- Example: Fork from root (Nothing = empty branch)
 --
 -- >>> case fork newLog Nothing of { Left _ -> True; Right _ -> False }
 -- True
@@ -280,30 +235,6 @@ fork log leafId =
         then Left ("No entries found for leaf: " ++ show leafId)
         else Right (Log branch)
 
--- Agent type (sketch)
-
 -- | Agent ⟜ reads a Log window, returns response Log + next Agent state
---
--- This is the core agentic recursion:
---
--- The Agent is its own continuation (fixed point).
---
--- Example usage pattern:
---
--- >>> -- Load a session
--- >>> -- result <- loadJSONL "session-0.jsonl"
--- >>> -- case result of
--- >>> --   Left err -> putStrLn $ "Parse error: " ++ err
--- >>> --   Right log -> do
--- >>> --     -- Fork to a specific entry (checkpoint)
--- >>> --     case fork log (Just "entry-id") of
--- >>> --       Left err -> putStrLn $ "Fork error: " ++ err
--- >>> --       Right sublog -> do
--- >>> --         -- Step the agent on the sub-log
--- >>> --         let (nextAgent, response) = step someAgent sublog
--- >>> --         putStrLn $ "Agent responded with " ++ show (length (case response of Log es -> es)) ++ " entries"
---
--- Verify this type matches pi-mono agent behavior.
--- Test with real session-0.jsonl: load 12 entries → fork to branch → step agent → verify response shape.
 newtype Agent = Agent {step :: Log -> (Agent, Log)}
   deriving (Generic)

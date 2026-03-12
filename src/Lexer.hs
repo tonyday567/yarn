@@ -3,25 +3,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-x-partial #-}
 
--- |
--- Module      : Lexer
--- Description : State-machine lexers via Traced MealyM
---
--- Performance principle: machines never allocate ByteStrings.
--- Runners drive directly over ByteString via unsafeIndex.
--- Token emission is unsafeSlice — zero copy.
--- Allocation is O(tokens), not O(bytes).
 module Lexer
-  ( -- * Word lexer
-    runWordLexerBS,
+  ( runWordLexerBS,
     wordFreqBS,
-
-    -- * Markup lexer
     MarkupCtx (..),
     MarkupToken (..),
     runMarkupLexerBS,
-
-    -- * Traced (->) State pipeline
     runMarkupStateBS,
     WI (..),
     AccState (..),
@@ -38,7 +25,6 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Unsafe qualified as BSU
 import Data.Char (ord)
-
 import Data.Maybe (mapMaybe)
 import Data.Word (Word8)
 import GHC.Exts (lazy)
@@ -47,12 +33,7 @@ import Traced
 import Prelude hiding (id, (.))
 import Prelude qualified
 
--- Helpers
-
 -- | Strict unboxed pair of byte and index.
--- Using a newtype with UNPACK instead of (Word8, Int) avoids a heap
--- allocation per step when threading the index through the pipeline.
--- GHC passes the fields as two separate unboxed arguments.
 data WI = WI {-# UNPACK #-} !Word8 {-# UNPACK #-} !Int
 
 isAlphaW :: Word8 -> Bool
@@ -63,11 +44,7 @@ toLowerW w
   | w >= 65 && w <= 90 = w + 32
   | otherwise = w
 
--- Word lexer — direct ByteString, offset tracking, zero copy
-
 -- | Run word lexer directly over a ByteString.
--- No [Word8] allocation. unsafeIndex for input, unsafeSlice for output.
--- toLower applied in lowerSlice — one allocation per token, not per byte.
 runWordLexerBS :: ByteString -> [ByteString]
 runWordLexerBS bs = go 0 False 0
   where
@@ -85,8 +62,6 @@ runWordLexerBS bs = go 0 False 0
     lowerSlice s l = BS.map toLowerW (BSU.unsafeTake l (BSU.unsafeDrop s bs))
 
 -- | Word frequency list — single pass, accumulate (word, count) pairs.
--- Returns list of (ByteString, Int) pairs in order of first appearance.
--- To find a word's count: use lookup or searchassociative list operations.
 wordFreqBS :: ByteString -> [(ByteString, Int)]
 wordFreqBS bs = go 0 False 0 []
   where
@@ -105,13 +80,10 @@ wordFreqBS bs = go 0 False 0 []
                     then go (i + 1) False 0 (insertFreq (lowerSlice start (i - start)) acc)
                     else go (i + 1) False 0 acc
     lowerSlice s l = BS.map toLowerW (BSU.unsafeTake l (BSU.unsafeDrop s bs))
-    -- Increment frequency if word exists in accumulator, else prepend with count 1
     insertFreq word [] = [(word, 1)]
     insertFreq word ((w, c) : rest)
       | word == w = (w, c + 1) : rest
       | otherwise = (w, c) : insertFreq word rest
-
--- Markup types
 
 data MarkupCtx
   = InContent
@@ -168,10 +140,7 @@ classifyByte _ w = case w of
   63 -> BQuestion
   _ -> BAlpha w
 
--- Markup accumulator — offset tracking
-
 -- | Accumulator: track start offset and length of current token being built.
--- Never holds a [Word8]. Emit is a slice of the original ByteString.
 data AccState = AccState
   { accStart :: {-# UNPACK #-} !Int,
     accLen :: {-# UNPACK #-} !Int,
@@ -179,7 +148,6 @@ data AccState = AccState
   }
 
 -- | Step the accumulator given a byte class, current context, and byte index.
--- Returns an emit action (constructor + slice coords) and new state.
 accumStep ::
   AccState ->
   ByteClass ->
@@ -225,11 +193,7 @@ accumStep (AccState !s !l !ctx) bc !i = case (ctx, bc) of
   _ ->
     (Nothing, AccState (if l == 0 then i else s) (l + 1) ctx)
 
--- Markup runner — direct ByteString, zero copy
-
 -- | Run markup lexer directly over a ByteString.
--- Context state machine driven byte by byte via unsafeIndex.
--- Token emission via unsafeSlice — zero copy for all name/content tokens.
 runMarkupLexerBS :: ByteString -> [MarkupToken]
 runMarkupLexerBS bs = go 0 (AccState 0 0 InContent)
   where
@@ -249,26 +213,6 @@ runMarkupLexerBS bs = go 0 (AccState 0 0 InContent)
                           else con (BSU.unsafeTake l (BSU.unsafeDrop s bs))
                    in tok : go (i + 1) acc'
 
--- Markup lexer as Traced MealyM
--- (for composition; uses [Word8] accumulator internally)
-
--- Offset-tracking accumulator for Traced MealyM pipeline
---
--- Input to the pipeline: (Word8, Int) — byte paired with its index.
--- Index flows through all stages so accumulator can track (start, len).
--- No [Word8] allocation. Token emission is unsafeTake/unsafeDrop slice.
---
--- Pipeline shape:
---   Loop InContent $
---     stage2 . stage1
---
--- where:
---   stage1 :: (Word8, Int, Ctx) -> (ByteClass, Int, Ctx)   classify + pass index
---   stage2 :: (ByteClass, Int, Ctx) -> (Maybe (con,s,l), Ctx)  accumulate offsets
---
--- The Ctx wire is the Loop feedback.
--- The Int (index) flows through as part of the value, not the feedback.
-
 -- | Offset-tracking accumulator state for the Traced pipeline.
 data OAccState = OAccState
   { oStart :: {-# UNPACK #-} !Int,
@@ -277,8 +221,6 @@ data OAccState = OAccState
   }
 
 -- | Step the offset accumulator.
--- Input: (ByteClass, Int, MarkupCtx)  — class, current index, feedback ctx
--- Output: (Maybe emit, new ctx) where emit = (constructor, start, len)
 oAccumStep ::
   OAccState ->
   (ByteClass, Int, MarkupCtx) ->
@@ -322,8 +264,6 @@ oAccumStep (OAccState !s !l !ctx) (bc, !i, _) = case (ctx, bc) of
   _ ->
     (Nothing, OAccState (if l == 0 then i else s) (l + 1) ctx)
 
-data MAccState = MAccState ![Word8] !MarkupCtx
-
 classW :: ByteClass -> Word8
 classW (BAlpha w) = w
 classW (BQuote c) = fromIntegral (ord c)
@@ -331,6 +271,8 @@ classW BSpace = 32
 classW BDash = 45
 classW BEquals = 61
 classW _ = 63
+
+data MAccState = MAccState ![Word8] !MarkupCtx
 
 mAccumStep :: MAccState -> (ByteClass, MarkupCtx) -> (Maybe MarkupToken, MAccState)
 mAccumStep (MAccState buf ctx) (bc, _) = case (ctx, bc) of
@@ -372,25 +314,13 @@ mAccumStep (MAccState buf ctx) (bc, _) = case (ctx, bc) of
   (InClose, _) -> (Nothing, MAccState (classW bc : buf) InClose)
   _ -> (Nothing, MAccState (classW bc : buf) ctx)
 
--- Traced (->) a (OAccState -> (Maybe token, OAccState))
---
--- Output type is State OAccState (Maybe token).
--- OAccState carries MarkupCtx — no feedback wire, no Loop, no knot.
--- runFn gives WI -> OAccState -> (Maybe token, OAccState).
--- Driver seeds with OAccState 0 0 InContent and threads state explicitly.
-
--- | Stage 1 as a plain function over (WI, OAccState).
--- Classifies the byte using ctx from OAccState, returns updated OAccState.
 stage1S :: (WI, OAccState) -> ((ByteClass, Int), OAccState)
 stage1S (WI w i, acc) = ((classifyByte (oCtx acc) w, i), acc)
 
--- | Stage 2 as a plain function over ((ByteClass, Int), OAccState).
 stage2S :: ((ByteClass, Int), OAccState) -> (Maybe (ByteString -> MarkupToken, Int, Int), OAccState)
 stage2S ((bc, i), acc) = oAccumStep acc (bc, i, oCtx acc)
 
 -- | Markup lexer as Traced (->) with OAccState threaded as output.
--- No Loop — OAccState carries MarkupCtx, threaded by the driver.
--- Compose stage2S stage1S lifts to Traced (->).
 markupLexerS :: Traced (->) WI (OAccState -> (Maybe (ByteString -> MarkupToken, Int, Int), OAccState))
 markupLexerS = Lift $ \wi acc -> stage2S (stage1S (wi, acc))
 
