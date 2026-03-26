@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
+-- | The [free] [traced] [symmetric] [monoidal] [category]
 module Traced
   ( TracedA (..),
     Traced,
@@ -53,28 +54,6 @@ instance Category (TracedA arr) where
   id = Pure
   (.) = Compose
 
--- TODO; what is the purpose of these arrow instances?
-instance Arrow Traced where
-  arr f = Lift f
-  first p = Compose (Lift (\(a, c) -> (run p a, c))) Pure
-
-instance Strong Traced where
-  first' p = Compose (Lift (\(a, c) -> (run p a, c))) Pure
-
-instance Functor (Traced a) where
-  fmap f p = Compose (Lift f) p
-
-instance Profunctor Traced where
-  dimap f g p = Lift g `Compose` p `Compose` Lift f
-
--- TODO: TracedA arr version?
-instance Costrong Traced where
-  unfirst = Knot
-
-  unsecond p = Knot (Lift sw `Compose` p `Compose` Lift sw)
-    where
-      sw (a, b) = (b, a)
-
 -- | run an Arrow
 runA :: (Arrow arr, ArrowLoop arr) => TracedA arr a b -> arr a b
 runA Pure = id
@@ -83,8 +62,8 @@ runA (Compose g h) = case g of
   Pure -> runA h
   Lift f -> f . runA h
   Compose g1 g2 -> runA (Compose g1 (Compose g2 h))
-  Knot x -> Arrow.loop (runA x . first (runA h))
-runA (Knot x) = Arrow.loop (runA x)
+  Knot k -> Arrow.loop (runA k . first (runA h))
+runA (Knot k) = Arrow.loop (runA k)
 
 -- | Evaluate @Traced@ to a Haskell function.
 --
@@ -101,7 +80,7 @@ run (Compose g h) = case g of
   Pure -> run h
   Lift f -> f . run h
   Compose g1 g2 -> run (Compose g1 (Compose g2 h))
-  Knot p -> knotl (run p) (run h)
+  Knot k -> knotl (run k) (run h)
 run (Knot p) = knot (run p)
 
 knot :: ((a, x) -> (b, x)) -> (a -> b)
@@ -109,6 +88,3 @@ knot f a = let (b,x) = f (a,x) in b
 
 knotl :: ((a, k) -> (b, k)) -> (z -> a) -> (z -> b)
 knotl p h = \a -> knot p (h a)
-
---cloop' :: ((x, k) -> (y, k)) -> (a -> x) -> (a -> y)
---cloop' p h = \a -> loop' p (h a)
