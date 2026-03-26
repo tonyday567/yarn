@@ -27,7 +27,7 @@ module SysL
   , testThenTraced
   ) where
 
-import Traced (Traced (..))
+import Traced (TracedA (..), Traced)
 import Traced qualified
 
 -- | Types
@@ -188,16 +188,16 @@ show' (VGradedFun _) = "VGradedFun"
 show' (VThen _ _)    = "VThen"
 show' (VEmbed _)     = "VEmbed"
 
--- | Translation from System L to Traced (->)
+-- | Translation from System L to Traced
 -- Command: stack in, (slot, val) out
 -- Term: stack in, (remaining stack, focus) out  
 -- Coterm: (stack, focus) in, (slot, val) out
 
-commandToTraced :: Command v -> Traced (->) [Val v] (Int, Val v)
+commandToTraced :: Command v -> Traced [Val v] (Int, Val v)
 commandToTraced (Cut t k) =
   Compose (cotermToTraced k) (termToTraced t)
 
-termToTraced :: Term v -> Traced (->) [Val v] ([Val v], Val v)
+termToTraced :: Term v -> Traced [Val v] ([Val v], Val v)
 termToTraced (Embed v) =
   Lift $ \stack -> (stack, evalValue v stack)
 termToTraced (Mu cmd) =
@@ -214,7 +214,7 @@ termToTraced (ThenComatch cmd) =
           (slot, v) -> RVal slot v
     in (stack, VThen fwdA bwCont)
 
-cotermToTraced :: Coterm v -> Traced (->) ([Val v], Val v) (Int, Val v)
+cotermToTraced :: Coterm v -> Traced ([Val v], Val v) (Int, Val v)
 cotermToTraced (Covar i) =
   Lift $ \(_, val) -> (i, val)
 cotermToTraced (Comu cmd) =

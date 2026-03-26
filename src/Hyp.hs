@@ -155,11 +155,11 @@ closeHyp p = Hyp $ \k ->
   in b
 
 -- | Unfold @Hyp@ back to @Traced@ syntax.
-fromHyp :: Hyp (->) a b -> Traced.Traced (->) a b
+fromHyp :: Hyp (->) a b -> Traced.Traced a b
 fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
 
 -- | Interpret @Traced@ parameterized by hyperfunctions into hyperfunctions.
-runHypWu :: Traced.Traced (Hyp (->)) a b -> Hyp (->) a b
+runHypWu :: Traced.TracedA (Hyp (->)) a b -> Hyp (->) a b
 runHypWu Traced.Pure = rep id
 runHypWu (Traced.Lift h) = h
 runHypWu (Traced.Compose g h) = runHypWu g ⊙ runHypWu h
@@ -173,7 +173,7 @@ traceHypWu h = rep $ \a ->
     fix f = let x = f x in x
 
 -- | Alternative bridge: @Traced@ to @Hyp (->)@ via eager fixed point.
-toHypF :: Traced.Traced (->) a b -> Hyp (->) a b
+toHypF :: Traced.Traced a b -> Hyp (->) a b
 toHypF Traced.Pure = rep id
 toHypF (Traced.Lift f) = rep f
 toHypF (Traced.Compose g h) = toHypF g `zipper` toHypF h

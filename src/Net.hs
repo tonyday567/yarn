@@ -7,7 +7,7 @@ import Control.Category (Category (..))
 import Harpie.Array qualified as A
 import LensS (LensS (..), Store (..), getS, mkLensS, setS)
 import Para (Para (..), runPara)
-import Traced
+import Traced (TracedA (..), Traced, runA)
 import Prelude hiding (id, (.))
 
 data NetParams a = NetParams
@@ -29,30 +29,30 @@ lensW2 = mkLensS w2 (\p w -> p {w2 = w})
 lensB2 :: LensS (NetParams a) (A.Array a)
 lensB2 = mkLensS b2 (\p b -> p {b2 = b})
 
-linear1 :: (Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+linear1 :: (Num a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 linear1 = Lift $ Para $ \(p, x) -> A.mult (w1 p) x
 
-bias1 :: (Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+bias1 :: (Num a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 bias1 = Lift $ Para $ \(p, x) -> x + b1 p
 
-relu1 :: (Ord a, Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+relu1 :: (Ord a, Num a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 relu1 = Lift $ Para $ \(_, x) -> fmap (max 0) x
 
-linear2 :: (Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+linear2 :: (Num a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 linear2 = Lift $ Para $ \(p, x) -> A.mult (w2 p) x
 
-bias2 :: (Num a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+bias2 :: (Num a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 bias2 = Lift $ Para $ \(p, x) -> x + b2 p
 
-model :: (Num a, Ord a) => Traced (Para (NetParams a)) (A.Array a) (A.Array a)
+model :: (Num a, Ord a) => TracedA (Para (NetParams a)) (A.Array a) (A.Array a)
 model = bias2 . linear2 . relu1 . bias1 . linear1
 
 forward :: (Num a, Ord a) => NetParams a -> A.Array a -> A.Array a
-forward p x = runPara (interpret model) p x
+forward p x = runPara (runA model) p x
 
 linear1B ::
   (Num a, Fractional a) =>
-  Traced (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
+  TracedA (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
 linear1B = Lift $ Para $ \(p, x) ->
   Store
     (\dy -> A.mult (A.transpose (w1 p)) dy)
@@ -60,13 +60,13 @@ linear1B = Lift $ Para $ \(p, x) ->
 
 bias1B ::
   (Num a) =>
-  Traced (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
+  TracedA (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
 bias1B = Lift $ Para $ \(p, x) ->
   Store id (x + b1 p)
 
 relu1B ::
   (Ord a, Num a) =>
-  Traced (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
+  TracedA (Para (NetParams a)) (A.Array a) (Store (A.Array a) (A.Array a))
 relu1B = Lift $ Para $ \(_, x) ->
   Store
     (\dy -> A.zipWith (\xi dyi -> if xi > 0 then dyi else 0) x dy)
@@ -86,7 +86,7 @@ andThen f g = Para $ \(p, a) ->
 modelB ::
   (Ord a, Num a, Fractional a) =>
   Para (NetParams a) (A.Array a) (Store (A.Array a) (A.Array a))
-modelB = interpret linear1B `andThen` interpret bias1B `andThen` interpret relu1B
+modelB = runA linear1B `andThen` runA bias1B `andThen` runA relu1B
 
 runModelB ::
   (Ord a, Num a, Fractional a) =>
@@ -102,7 +102,7 @@ data BackPass b a s p = BackPass
 
 linear1BP ::
   (Num a, Fractional a) =>
-  Traced
+  TracedA
     (Para (NetParams a))
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
@@ -137,14 +137,14 @@ step ::
 step lr p x target =
   let y = forward p x
       (loss, dOut) = mseLoss y target
-      Store mkBP _ = unPara (interpret linear1BP) (p, x)
+      Store mkBP _ = unPara (runA linear1BP) (p, x)
       bp = mkBP dOut
       p' = paramUpdate bp dOut lr p
    in (loss, p')
 
 bias1BP ::
   (Num a) =>
-  Traced
+  TracedA
     (Para (NetParams a))
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
@@ -163,7 +163,7 @@ bias1BP = Lift $ Para $ \(p, x) ->
 
 relu1BP ::
   (Ord a, Num a) =>
-  Traced
+  TracedA
     (Para (NetParams a))
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
@@ -178,7 +178,7 @@ relu1BP = Lift $ Para $ \(_, x) ->
 
 linear2BP ::
   (Num a, Fractional a) =>
-  Traced
+  TracedA
     (Para (NetParams a))
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
@@ -198,7 +198,7 @@ linear2BP = Lift $ Para $ \(p, x) ->
 
 bias2BP ::
   (Num a) =>
-  Traced
+  TracedA
     (Para (NetParams a))
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
@@ -247,11 +247,11 @@ modelBP ::
     (A.Array a)
     (Store (A.Array a) (BackPass (A.Array a) (A.Array a) a (NetParams a)))
 modelBP =
-  interpret linear1BP
-    `andThenBP` interpret bias1BP
-    `andThenBP` interpret relu1BP
-    `andThenBP` interpret linear2BP
-    `andThenBP` interpret bias2BP
+  runA linear1BP
+    `andThenBP` runA bias1BP
+    `andThenBP` runA relu1BP
+    `andThenBP` runA linear2BP
+    `andThenBP` runA bias2BP
 
 stepFull ::
   (Ord a, Num a, Fractional a) =>

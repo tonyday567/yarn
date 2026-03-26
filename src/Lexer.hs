@@ -320,8 +320,8 @@ stage1S (WI w i, acc) = ((classifyByte (oCtx acc) w, i), acc)
 stage2S :: ((ByteClass, Int), OAccState) -> (Maybe (ByteString -> MarkupToken, Int, Int), OAccState)
 stage2S ((bc, i), acc) = oAccumStep acc (bc, i, oCtx acc)
 
--- | Markup lexer as Traced (->) with OAccState threaded as output.
-markupLexerS :: Traced (->) WI (OAccState -> (Maybe (ByteString -> MarkupToken, Int, Int), OAccState))
+-- | Markup lexer as Traced with OAccState threaded as output.
+markupLexerS :: Traced WI (OAccState -> (Maybe (ByteString -> MarkupToken, Int, Int), OAccState))
 markupLexerS = Lift $ \wi acc -> stage2S (stage1S (wi, acc))
 
 -- | Compiled step function.
