@@ -189,31 +189,30 @@ show' (VThen _ _)    = "VThen"
 show' (VEmbed _)     = "VEmbed"
 
 -- | Translation from System L to Traced (->)
--- Input is (stack, focus), output is (slot, val)
+-- Command: stack in, (slot, val) out
+-- Term: stack in, (remaining stack, focus) out  
+-- Coterm: (stack, focus) in, (slot, val) out
 
-commandToTraced :: Command v -> Traced (->) ([Val v], Val v) (Int, Val v)
+commandToTraced :: Command v -> Traced (->) [Val v] (Int, Val v)
 commandToTraced (Cut t k) =
-  Lift $ \(stack, _) ->
-    let v = Traced.run (termToTraced t) (stack, undefined)
-    in Traced.run (cotermToTraced k) (stack, v)
+  Compose (cotermToTraced k) (termToTraced t)
 
-termToTraced :: Term v -> Traced (->) ([Val v], Val v) (Val v)
+termToTraced :: Term v -> Traced (->) [Val v] ([Val v], Val v)
 termToTraced (Embed v) =
-  Lift $ \(stack, _) -> evalValue v stack
+  Lift $ \stack -> (stack, evalValue v stack)
 termToTraced (Mu cmd) =
-  Compose
-    (Lift $ \(slot, v) -> case slot of
-      0 -> v
-      _ -> error "Mu: expected slot 0")
-    (commandToTraced cmd)
+  Lift $ \stack ->
+    case Traced.run (commandToTraced cmd) stack of
+      (0, v) -> (stack, v)
+      _      -> error "Mu: expected slot 0"
 termToTraced (ThenComatch cmd) =
-  Lift $ \(stack, val) ->
-    let fwdA = case Traced.run (commandToTraced cmd) (stack, val) of
+  Lift $ \stack ->
+    let fwdA = case Traced.run (commandToTraced cmd) stack of
                  (1, v) -> v
                  _      -> error "ThenComatch: expected slot 1"
-        bwCont bwA = case Traced.run (commandToTraced cmd) (bwA : stack, val) of
+        bwCont bwA = case Traced.run (commandToTraced cmd) (bwA : stack) of
           (slot, v) -> RVal slot v
-    in VThen fwdA bwCont
+    in (stack, VThen fwdA bwCont)
 
 cotermToTraced :: Coterm v -> Traced (->) ([Val v], Val v) (Int, Val v)
 cotermToTraced (Covar i) =
@@ -221,29 +220,29 @@ cotermToTraced (Covar i) =
 cotermToTraced (Comu cmd) =
   Compose
     (commandToTraced cmd)
-    (Lift $ \(stack, val) -> (val : stack, val))
+    (Lift $ \(stack, val) -> val : stack)
 cotermToTraced (TensorMatch cmd) =
   Compose
     (commandToTraced cmd)
     (Lift $ \(stack, val) -> case val of
-      VPair x y -> (x : y : stack, val)
+      VPair x y -> x : y : stack
       _         -> error "TensorMatch: not a pair")
 cotermToTraced (PlusMatch c1 c2) =
   Lift $ \(stack, val) -> case val of
-    VLeft x  -> Traced.run (commandToTraced c1) (x : stack, x)
-    VRight y -> Traced.run (commandToTraced c2) (y : stack, y)
+    VLeft x  -> Traced.run (commandToTraced c1) (x : stack)
+    VRight y -> Traced.run (commandToTraced c2) (y : stack)
     _        -> error "PlusMatch: not a sum"
 cotermToTraced (HomCointro t k) =
   Lift $ \(stack, val) ->
-    case Traced.run (termToTraced t) (stack, val) of
-      arg -> case val of
+    case Traced.run (termToTraced t) stack of
+      (_, arg) -> case val of
         VFun f -> let RVal _ v = f arg
                   in Traced.run (cotermToTraced k) (stack, v)
         _      -> error "HomCointro: not a function"
 cotermToTraced (GradedHomCointro t coterms) =
   Lift $ \(stack, val) ->
-    case Traced.run (termToTraced t) (stack, val) of
-      arg -> case val of
+    case Traced.run (termToTraced t) stack of
+      (_, arg) -> case val of
         VGradedFun f ->
           let RVal slot v = f arg
           in Traced.run (cotermToTraced (coterms !! slot)) (stack, v)
@@ -289,7 +288,7 @@ testIdTraced = Traced.run
     (Cut
       (Embed (HomComatch (Cut (Embed (Var 0)) (Covar 0))))
       (HomCointro (Embed (Var 0)) (Covar 0))))
-  ([VUnit], VUnit)
+  [VUnit]
 -- expected: (0, VUnit)
 
 testThenTraced :: (Int, Val Double)
@@ -302,5 +301,5 @@ testThenTraced =
           (ThenCointro
             (Comu (Cut (Embed (Var 0)) (Covar 1)))
             (Comu (Cut (Embed (Var 0)) (Covar 0))))))
-      ([], val)
+      [val]
 -- expected: (0, VEmbed 1.0)
