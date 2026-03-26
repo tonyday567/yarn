@@ -16,10 +16,19 @@ module SysL
   , evalCoterm
     -- * Helpers
   , lookupEnv
+    -- * Traced interpreter
+  , commandToTraced
+  , termToTraced
+  , cotermToTraced
     -- * Tests
   , testId
   , testThen
+  , testIdTraced
+  , testThenTraced
   ) where
+
+import Traced (Traced (..))
+import Traced qualified
 
 -- | Types
 data Ty
@@ -179,6 +188,70 @@ show' (VGradedFun _) = "VGradedFun"
 show' (VThen _ _)    = "VThen"
 show' (VEmbed _)     = "VEmbed"
 
+-- | Translation from System L to Traced (->)
+-- Each construct maps to a Traced morphism with environment in the input
+
+commandToTraced :: Command v -> Traced (->) (Env v, Val v) (Int, Val v)
+commandToTraced (Cut t k) =
+  Lift $ \(env, dummyVal) ->
+    let v = Traced.run (termToTraced t) (env, dummyVal)
+    in Traced.run (cotermToTraced k) (env, v)
+
+termToTraced :: Term v -> Traced (->) (Env v, Val v) (Val v)
+termToTraced (Embed v) =
+  Lift $ \(env, _) -> evalValue v env
+termToTraced (Mu cmd) =
+  Lift $ \(env, dummyVal) ->
+    case Traced.run (commandToTraced cmd) (env, dummyVal) of
+      (0, v) -> v
+      _      -> error "Mu: expected slot 0"
+termToTraced (ThenComatch cmd) =
+  Lift $ \(env, val) ->
+    let fwdA = case Traced.run (commandToTraced cmd) (env, val) of
+                 (1, v) -> v
+                 _      -> error "ThenComatch: expected slot 1"
+        bwCont bwA = case Traced.run (commandToTraced cmd) (bwA : env, val) of
+          (slot, v) -> RVal slot v
+    in VThen fwdA bwCont
+
+cotermToTraced :: Coterm v -> Traced (->) (Env v, Val v) (Int, Val v)
+cotermToTraced (Covar i) =
+  Lift $ \(_, val) -> (i, val)
+cotermToTraced (Comu cmd) =
+  Lift $ \(env, val) ->
+    Traced.run (commandToTraced cmd) (val : env, val)
+cotermToTraced (TensorMatch cmd) =
+  Lift $ \(env, val) -> case val of
+    VPair x y -> Traced.run (commandToTraced cmd) (x : y : env, val)
+    _         -> error "TensorMatch: not a pair"
+cotermToTraced (PlusMatch c1 c2) =
+  Lift $ \(env, val) -> case val of
+    VLeft x  -> Traced.run (commandToTraced c1) (env, x)
+    VRight y -> Traced.run (commandToTraced c2) (env, y)
+    _        -> error "PlusMatch: not a sum"
+cotermToTraced (HomCointro t k) =
+  Lift $ \(env, val) ->
+    case Traced.run (termToTraced t) (env, val) of
+      arg -> case val of
+        VFun f -> let RVal _ v = f arg
+                  in Traced.run (cotermToTraced k) (env, v)
+        _      -> error "HomCointro: not a function"
+cotermToTraced (GradedHomCointro t coterms) =
+  Lift $ \(env, val) ->
+    case Traced.run (termToTraced t) (env, val) of
+      arg -> case val of
+        VGradedFun f ->
+          let RVal slot v = f arg
+          in Traced.run (cotermToTraced (coterms !! slot)) (env, v)
+        _ -> error "GradedHomCointro: not a graded function"
+cotermToTraced (ThenCointro k1 k2) =
+  Lift $ \(env, val) -> case val of
+    VThen fwdA cont ->
+      let (_, residual) = Traced.run (cotermToTraced k1) (env, fwdA)
+          RVal _ fwdB   = cont residual
+      in Traced.run (cotermToTraced k2) (env, fwdB)
+    _ -> error "ThenCointro: expected VThen"
+
 -- | Tests
 
 -- identity via Hom: \x -> x applied to VUnit
@@ -203,3 +276,27 @@ testThen =
           (Comu (Cut (Embed (Var 0)) (Covar 1)))  -- k1: fwdA -> slot 1 (residual)
           (Comu (Cut (Embed (Var 0)) (Covar 0))))) -- k2: fwdB -> slot 0 (focus)
       []
+
+-- | Round trip tests for Traced interpretation
+
+testIdTraced :: (Int, Val ())
+testIdTraced = Traced.run
+  (commandToTraced
+    (Cut
+      (Embed (HomComatch (Cut (Embed (Var 0)) (Covar 0))))
+      (HomCointro (Embed (Var 0)) (Covar 0))))
+  ([VUnit], VUnit)
+-- expected: (0, VUnit)
+
+testThenTraced :: (Int, Val Double)
+testThenTraced =
+  let val = VThen (VEmbed 1.0) (\r -> RVal 0 r)
+  in Traced.run
+      (commandToTraced
+        (Cut
+          (Embed (Lit val))
+          (ThenCointro
+            (Comu (Cut (Embed (Var 0)) (Covar 1)))
+            (Comu (Cut (Embed (Var 0)) (Covar 0))))))
+      ([], val)
+-- expected: (0, VEmbed 1.0)
