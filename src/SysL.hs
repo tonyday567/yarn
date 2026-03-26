@@ -189,67 +189,71 @@ show' (VThen _ _)    = "VThen"
 show' (VEmbed _)     = "VEmbed"
 
 -- | Translation from System L to Traced (->)
--- Each construct maps to a Traced morphism with environment in the input
+-- Input is (stack, focus), output is (slot, val)
 
-commandToTraced :: Command v -> Traced (->) (Env v, Val v) (Int, Val v)
+commandToTraced :: Command v -> Traced (->) ([Val v], Val v) (Int, Val v)
 commandToTraced (Cut t k) =
-  Lift $ \(env, dummyVal) ->
-    let v = Traced.run (termToTraced t) (env, dummyVal)
-    in Traced.run (cotermToTraced k) (env, v)
+  Lift $ \(stack, _) ->
+    let v = Traced.run (termToTraced t) (stack, undefined)
+    in Traced.run (cotermToTraced k) (stack, v)
 
-termToTraced :: Term v -> Traced (->) (Env v, Val v) (Val v)
+termToTraced :: Term v -> Traced (->) ([Val v], Val v) (Val v)
 termToTraced (Embed v) =
-  Lift $ \(env, _) -> evalValue v env
+  Lift $ \(stack, _) -> evalValue v stack
 termToTraced (Mu cmd) =
-  Lift $ \(env, dummyVal) ->
-    case Traced.run (commandToTraced cmd) (env, dummyVal) of
-      (0, v) -> v
-      _      -> error "Mu: expected slot 0"
+  Compose
+    (Lift $ \(slot, v) -> case slot of
+      0 -> v
+      _ -> error "Mu: expected slot 0")
+    (commandToTraced cmd)
 termToTraced (ThenComatch cmd) =
-  Lift $ \(env, val) ->
-    let fwdA = case Traced.run (commandToTraced cmd) (env, val) of
+  Lift $ \(stack, val) ->
+    let fwdA = case Traced.run (commandToTraced cmd) (stack, val) of
                  (1, v) -> v
                  _      -> error "ThenComatch: expected slot 1"
-        bwCont bwA = case Traced.run (commandToTraced cmd) (bwA : env, val) of
+        bwCont bwA = case Traced.run (commandToTraced cmd) (bwA : stack, val) of
           (slot, v) -> RVal slot v
     in VThen fwdA bwCont
 
-cotermToTraced :: Coterm v -> Traced (->) (Env v, Val v) (Int, Val v)
+cotermToTraced :: Coterm v -> Traced (->) ([Val v], Val v) (Int, Val v)
 cotermToTraced (Covar i) =
   Lift $ \(_, val) -> (i, val)
 cotermToTraced (Comu cmd) =
-  Lift $ \(env, val) ->
-    Traced.run (commandToTraced cmd) (val : env, val)
+  Compose
+    (commandToTraced cmd)
+    (Lift $ \(stack, val) -> (val : stack, val))
 cotermToTraced (TensorMatch cmd) =
-  Lift $ \(env, val) -> case val of
-    VPair x y -> Traced.run (commandToTraced cmd) (x : y : env, val)
-    _         -> error "TensorMatch: not a pair"
+  Compose
+    (commandToTraced cmd)
+    (Lift $ \(stack, val) -> case val of
+      VPair x y -> (x : y : stack, val)
+      _         -> error "TensorMatch: not a pair")
 cotermToTraced (PlusMatch c1 c2) =
-  Lift $ \(env, val) -> case val of
-    VLeft x  -> Traced.run (commandToTraced c1) (env, x)
-    VRight y -> Traced.run (commandToTraced c2) (env, y)
+  Lift $ \(stack, val) -> case val of
+    VLeft x  -> Traced.run (commandToTraced c1) (x : stack, x)
+    VRight y -> Traced.run (commandToTraced c2) (y : stack, y)
     _        -> error "PlusMatch: not a sum"
 cotermToTraced (HomCointro t k) =
-  Lift $ \(env, val) ->
-    case Traced.run (termToTraced t) (env, val) of
+  Lift $ \(stack, val) ->
+    case Traced.run (termToTraced t) (stack, val) of
       arg -> case val of
         VFun f -> let RVal _ v = f arg
-                  in Traced.run (cotermToTraced k) (env, v)
+                  in Traced.run (cotermToTraced k) (stack, v)
         _      -> error "HomCointro: not a function"
 cotermToTraced (GradedHomCointro t coterms) =
-  Lift $ \(env, val) ->
-    case Traced.run (termToTraced t) (env, val) of
+  Lift $ \(stack, val) ->
+    case Traced.run (termToTraced t) (stack, val) of
       arg -> case val of
         VGradedFun f ->
           let RVal slot v = f arg
-          in Traced.run (cotermToTraced (coterms !! slot)) (env, v)
+          in Traced.run (cotermToTraced (coterms !! slot)) (stack, v)
         _ -> error "GradedHomCointro: not a graded function"
 cotermToTraced (ThenCointro k1 k2) =
-  Lift $ \(env, val) -> case val of
+  Lift $ \(stack, val) -> case val of
     VThen fwdA cont ->
-      let (_, residual) = Traced.run (cotermToTraced k1) (env, fwdA)
+      let (_, residual) = Traced.run (cotermToTraced k1) (stack, fwdA)
           RVal _ fwdB   = cont residual
-      in Traced.run (cotermToTraced k2) (env, fwdB)
+      in Traced.run (cotermToTraced k2) (stack, fwdB)
     _ -> error "ThenCointro: expected VThen"
 
 -- | Tests
