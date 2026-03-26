@@ -17,6 +17,7 @@ library
     Para
     SysL
     Traced
+    TracedQ
 
   build-depends:
     aeson >=2.0,

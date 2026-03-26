@@ -28,7 +28,6 @@ module Hyp
     send',
 
     -- * Bridge from Traced
-    toHyp,
     fromHyp,
     toHypF,
     closeHyp,
@@ -180,6 +179,3 @@ toHypF (Traced.Lift f) = rep f
 toHypF (Traced.Compose g h) = toHypF g `zipper` toHypF h
 toHypF u@(Traced.Knot _) = rep (Traced.run u)
 
--- | Alias for @fromHyp@.
-toHyp :: Hyp (->) a b -> Traced.Traced (->) a b
-toHyp = fromHyp
