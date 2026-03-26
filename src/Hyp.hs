@@ -159,6 +159,7 @@ fromHyp :: Hyp (->) a b -> Traced.Traced a b
 fromHyp h = Traced.Lift $ \a -> ι h (Hyp (const a))
 
 -- | Interpret @Traced@ parameterized by hyperfunctions into hyperfunctions.
+-- TODO: Lift id /= Pure
 runHypWu :: Traced.TracedA (Hyp (->)) a b -> Hyp (->) a b
 runHypWu Traced.Pure = rep id
 runHypWu (Traced.Lift h) = h
