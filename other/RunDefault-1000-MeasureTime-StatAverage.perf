@@ -1,1 +1,0 @@
-fromList [(["Kleisli tokenize","time"],265316.059),(["Traced (->) a (State s b) tokenize","time"],78443.632),(["flatparse tokenize","time"],87988.155),(["hand-written tokenize","time"],59725.852),(["html-parse tokens","time"],127202.716)]

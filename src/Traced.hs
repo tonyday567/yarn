@@ -1,64 +1,77 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UnicodeSyntax #-}
 
--- | The [free] [traced] [symmetric] [monoidal] [category]
+-- | The free traced monoidal category over any base category
 module Traced
-  ( TracedA (..),
-    Traced,
-    yank,
-    runA,
-    run,
-    knot,
-  )
-where
+  ( -- Core types
+    TracedA (..)
+  , Traced
+  , Trace(..)
+    -- Runners
+  , run
+  ) where
 
-import Control.Arrow (Arrow, arr, ArrowLoop, first)
-import Control.Arrow qualified as Arrow
-import Control.Category (Category (..))
-import Data.Profunctor
-import Data.Profunctor.Strong (Strong (..))
 import Prelude hiding (id, (.))
+import Control.Category (Category(..), id, (.))
+import Data.Profunctor.Strong (Costrong (..))
+import Data.Profunctor (Cochoice (..), Profunctor(..))
 
--- | The free traced monoidal category over base category @arr@.
-data TracedA arr a b where
-  Lift :: arr a b -> TracedA arr a b
-  Compose :: TracedA arr b c -> TracedA arr a b -> TracedA arr a c
-  Knot :: TracedA arr (a, c) (b, c) -> TracedA arr a b
+-- | the Trace action being elimniated goes on the left of the (co)product:
+--
+-- - (a,)  for pairs
+-- - Either a for Either
+-- - These a for These
+--
+-- This is opposite to the profunctors convention.
+--
+class Trace arr t where
+  trace :: arr (t a b) (t a c) -> arr b c
 
-type Traced = TracedA (->)
+-- | unsecond
+instance {-# OVERLAPPING #-} Trace (->) (,) where
+  trace f b = let (a, c) = f (a, b) in c
 
-instance (Category arr) => Category (TracedA arr) where
+-- | unright
+-- trace f b = fix (\go x -> either (go . Left) id (f x)) (Right b)
+instance {-# OVERLAPPING #-} Trace (->) Either where
+  trace f b = go (Right b)
+    where
+      go x = case f x of
+        Right c -> c    
+        Left a -> go (Left a)
+
+-- | Costrong profunctor instance: trace via unsecond
+instance (Category p, Costrong p) => Trace p (,) where
+  trace k = unsecond k
+
+-- | Cochoice profunctor instance: trace via unright
+instance (Category p, Cochoice p) => Trace p Either where
+  trace k = unright k
+
+-- | The Free Traced Monoidal Category
+data TracedA arr t a b where
+  Lift :: arr a b -> TracedA arr t a b
+  Compose :: TracedA arr t b c -> TracedA arr t a b -> TracedA arr t a c
+  Knot :: arr (t a b) (t a c) -> TracedA arr t b c
+
+instance (Category arr) => Category (TracedA arr t) where
   id = Lift id
   (.) = Compose
 
--- | Tie a knot: yank feedback from a function.
-yank :: ((a, c) -> (b, c)) -> Traced a b
-yank f = Knot (Lift f)
+-- | The classical product traced of ArrowLoop
+type Traced = TracedA (->) (,)
 
--- | lower a TracedA arr to an arr
-runA :: (Arrow arr, ArrowLoop arr) => TracedA arr a b -> arr a b
-runA (Lift f) = f
-runA (Compose (Knot k) h) = Arrow.loop (runA k . first (runA h))
-runA (Compose f h) = runA f . runA h
-runA (Knot k) = Arrow.loop (runA k)
-
--- | Evaluate @Traced@ to a function.
+-- | Evaluate a traced arrow to its underlying arrow.
 --
--- >>> let f = Compose (Lift (+ 1)) (Lift (* 2))
+-- >>> let f = Compose (Lift (+ 1)) (Lift (* 2)) :: Traced Int Int
 -- >>> run f 5
 -- 11
 --
--- >>> (run $ yank $ \(i, fibs) -> (fibs !! i, 0 : 1 : zipWith (+) fibs (drop 1 fibs))) 10
+-- >>> let g = Knot (\(fibs, i) -> (0 : 1 : zipWith (+) fibs (drop 1 fibs), fibs !! i)) :: Traced Int Int
+-- >>> run g 10
 -- 55
-run :: Traced a b -> (a -> b)
+run :: (Category arr, Trace arr t) => TracedA arr t x y -> arr x y
 run (Lift f) = f
-run (Compose (Knot f) g) = knot (run f) . run g
 run (Compose f g) = run f . run g
-run (Knot f) = knot (run f)
-
--- | This is the same as Arrow.loop and is provided to avoid arrow & Arrow usage.
-knot :: ((a, x) -> (b, x)) -> (a -> b)
-knot f a = let (b,x) = f (a,x) in b
+run (Knot k) = trace k
