@@ -10,7 +10,6 @@ library
   exposed-modules:
     Hyp
     Hyp.Channel
-    Log
     Traced
     Traces
 
