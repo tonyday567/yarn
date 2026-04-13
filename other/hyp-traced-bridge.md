@@ -120,3 +120,208 @@ Hasegawa also separates cyclic sharing (the trace) from fixed-point combinators:
 - The Geometry of Interaction connection (Int(C) completion, `callCC`, shift/reset) is a conjecture not yet developed.
 - The graded structure counting `Knot` depth and its implications for Okasaki queue methods are noted but not formalised.
 - Kidney-Wu 2026: specific examples (breadth-first search via Hofmann, concurrency scheduler) mapping onto `TracedA`/`HypA` would strengthen "hyperfunctions are traced catamorphisms."
+
+---
+
+## The Kan Extension Hierarchy
+
+The free-category package makes the pattern explicit for the free category:
+
+```haskell
+-- Initial: lists of composable morphisms
+data Cat f a b where
+  Id   :: Cat f a a
+  (:.) :: f b c -> Cat f a b -> Cat f a c
+
+-- Final: Cayley/Yoneda embedding
+newtype Queue f a b = Queue { runQueue :: forall r. Cat f b r -> Cat f a r }
+```
+
+`Queue f a b` is `Ran (Cat f) (Cat f)` — the free category represented via its
+universal property rather than as explicit lists. Same category, O(1) amortised
+composition instead of O(n).
+
+Adding `Knot` (the trace) to the free category requires a fixpoint, because feedback
+loops back on itself. The same Cayley move applied to the free *traced* category
+gives `HypA`:
+
+```haskell
+HypA a b  =  HypA b a -> b    -- Fix (Ran (Const a) (Const b))
+```
+
+The hierarchy:
+
+| Level              | Initial (syntax)  | Final (semantics) | What the step adds |
+|--------------------|-------------------|-------------------|--------------------|
+| Free category      | `Cat` / `LiftCompose` | `Queue`       | Yoneda / Ran       |
+| Free traced category | `TracedA`       | `HypA`            | Fix (feedback)     |
+
+`Queue` is `Ran` of the free category along itself. `HypA` is `Fix(Ran(Const a)(Const b))` — the `Fix` is exactly what `Knot` contributes. Feedback requires a fixpoint; the free category does not.
+
+The universal property stated categorically: for any traced monoidal category `C`
+and functor `F : arr -> C`, there is a unique traced functor `TracedA arr t -> C`
+extending `F`. When `C = HypA`, that unique functor is `toHyp`. `HypA` is the
+codensity/Yoneda representation of `TracedA` with the feedback baked into the type
+rather than sitting as an explicit constructor.
+
+The triangle `lower . toHyp = run` is the unit-counit identity of this adjunction:
+`run` eliminates the initial encoding, `lower` observes the final encoding, and they
+agree because they are the same universal map viewed from opposite sides.
+
+---
+
+## Reflection without Remorse: The Traced Category Extension
+
+**Reference:** van der Ploeg & Kiselyov, Haskell 2014
+
+The paper establishes a hierarchy for solving the build-and-observe performance
+problem:
+
+| Structure | Naive       | CPS / Codensity | Explicit sequence     |
+|-----------|-------------|-----------------|----------------------|
+| Monoid    | list        | difference list | queue                |
+| Monad     | free monad  | codensity monad | type-aligned queue   |
+| Category  | `Cat`       | `Queue` (Ran)   | type-aligned queue   |
+
+The paper stops at categories. The natural next row is:
+
+| Traced category | `TracedA` | `HypA` (Fix . Ran) | type-aligned queue + Fix |
+
+### The direct mappings
+
+**Left-nested composition.** Left-nested `>>=` in the paper produces O(n²)
+performance. Left-nested `Compose` in `TracedA` produces the same problem — and
+worse, without the Mendler case, `Knot` gets buried under the left-nesting and
+collapses to the degenerate model.
+
+**The hidden sequence.** The paper's title refers to the implicit sequence of
+monadic binds, made explicit by a type-aligned queue. In `TracedA`, the hidden
+structure is the feedback channel inside `Knot`. Both are made explicit by the
+respective constructions: the queue in the paper, the `Knot` constructor here.
+
+**`PMonad` and `Trace`.** The paper introduces `PMonad`, an alternative to `Monad`
+where bind takes an explicit type-aligned sequence as its right argument rather than
+a single continuation:
+
+```haskell
+class PMonad m where
+  return' :: a -> m a
+  (>>^=) :: m a -> MCExp m a b -> m b
+```
+
+This is structurally the same move as the `Trace` class: instead of hiding the
+feedback channel inside the monad, make it an explicit typed argument:
+
+```haskell
+class Trace arr t where
+  trace   :: arr (t a b) (t a c) -> arr b c   -- observe the channel
+  untrace :: arr b c -> arr (t a b) (t a c)   -- inject into the channel
+```
+
+`untrace` is the analogue of `expr = tsingleton` in the paper — converting a single
+morphism into the explicit sequence representation. `trace` is the analogue of `val`
+— observing the head of the sequence and reducing.
+
+**`viewl` is the Mendler case.** The paper's solution requires `viewl` on the
+type-aligned queue to inspect the head of the sequence before recursing. In `run`,
+the Mendler case does exactly this:
+
+```haskell
+run (Compose (Knot f) g) = trace (f . untrace (run g))
+```
+
+When a `Knot` appears at the head of a composition, inspect it before recursing into
+`g`. Without this case, `run` falls through to the general `Compose` rule, buries the
+`Knot`, and produces the degenerate model — the traced category collapses to the free
+category with a fixed-point operator. This is the remorse: `Knot` becomes
+observationally equivalent to `Lift (trace k)`.
+
+### The step the paper does not take: Fix
+
+The paper notes that free monoids are free categories with one object, and free
+categories are paths through a directed graph — type-aligned sequences. It does not
+take the next step.
+
+The free traced category requires one addition beyond the free category: a fixpoint.
+`Knot` is the generator of feedback, and `HypA = Fix(Ran(Const a)(Const b))` is the
+efficient (final/codensity) representation of the free traced category — exactly as
+`Queue` is the efficient representation of the free category.
+
+```
+Cat  +  viewl  =  Queue         -- reflection without remorse for categories
+TracedA  +  Mendler  =  HypA    -- reflection without remorse for traced categories
+```
+
+The `Fix` in `HypA` is what `Knot` contributes. Every other step — making the
+sequence explicit, using Ran for efficient composition, inspecting before recursing —
+is present in both. The traced case adds one thing: the feedback loop closes on
+itself, requiring a fixpoint the free category never needs.
+
+### The full hierarchy
+
+| Structure       | Naive     | Efficient (Ran / Fix.Ran) | Inspection mechanism     |
+|-----------------|-----------|---------------------------|--------------------------|
+| Monoid          | list      | difference list            | head/tail                |
+| Monad           | free monad| codensity monad            | `viewl` on TCQueue       |
+| Category        | `Cat`     | `Queue`                    | `viewl` on type-aligned queue |
+| Traced category | `TracedA` | `HypA`                     | Mendler case in `run`    |
+
+Each row adds one capability over the previous. The traced row adds `Fix` — the
+ability to close a feedback loop. The Mendler inspection is what keeps that loop
+visible rather than flattening it into the layer below.
+
+---
+
+## Costrength: The Categorical Backing for Trace
+
+**Reference:** Balan & Pantelimon, "The Hidden Strength of Costrong Functors" (2025)
+
+The `Trace` typeclass bundles two directions of a monoidal action:
+
+```haskell
+class Trace arr t where
+  untrace :: arr b c -> arr (t a b) (t a c)   -- STRONG:   push action inside
+  trace   :: arr (t a b) (t a c) -> arr b c   -- COSTRONG: pull action out
+```
+
+This is the formal definition of an M-costrong functor. The paper's costrength natural
+transformation `cst : F(M . X) -> M . F(X)` is exactly `trace`. The strength `st :
+M . F(X) -> F(M . X)` is exactly `untrace`.
+
+### Theorem 3.2: Costrong = Copointed on cartesian categories
+
+On a cartesian category, costrong endofunctors are in bijection with copointed
+endofunctors — those equipped with a natural transformation `ε : F -> id`. The
+costrength `cst` corresponds to `ε` via:
+
+```
+ε : F(M) -> M    given by    F(M) ≅ F(M x 1) -> M x F(1) -> M
+```
+
+For our `trace`: the copoint `ε` is exactly the operation that extracts a plain arrow
+from a traced one. `trace` is the copoint of the traced structure.
+
+### Proposition A.4: Free constructions inherit costrength
+
+If the generating functor `F` is M-costrong, so is the free monad on `F`. `TracedA` is
+the free traced category over `arr`. If `arr` supports `Trace` (is costrong with respect
+to `t`), then `TracedA` inherits it. This is the categorical justification for why the
+`Trace` instance on `TracedA` is well-defined and not just ad hoc.
+
+### Section 4.2: Costrength and streams
+
+A costrong functor `F` lifts to stream coalgebras: `cst : F(M x X) -> M x F(X)` keeps
+the output channel observable through the context `F`. For `Either` tensor, this is
+exactly the while-loop trace — `Right` (the output) remains extractable from within `F`
+on every iteration. The stream lifting result formally backs the `Trace (->) Either`
+instance as a valid costrength.
+
+### The optics connection
+
+Section 4.1: an M-costrong functor paired with an M-strong functor gives an optics
+transformer. Our `(trace, untrace)` pair is this exactly — `trace` costrong, `untrace`
+strong. Together they define the traced optic structure, and this is the formal backing
+for the profunctor instances (`Costrong`, `Strong`, `Cochoice`, `Choice`) on `TracedA`.
+
+The `Trace` typeclass is not an ad hoc design — it is the interface of a costrong/strong
+adjoint pair, formalised independently in the optics literature.

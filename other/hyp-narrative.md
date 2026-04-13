@@ -247,3 +247,29 @@ TracedA a b  ~  Free (Ran (Const a) (Const b))
 ```
 
 `TracedA` (initial) and `HypA` (final) are related by the Kan extension adjunction. `ι` is the counit of the adjunction. The triangle `lower . toHyp = run` is the unit-counit identity.
+
+---
+
+## Deforestation and GHC Erasure
+
+`HypA` is the Church encoding of `TracedA`. The same move as Church-encoded lists
+vs cons cells — and GHC's simplifier can fuse away the intermediate structure entirely
+under `{-# INLINE #-}` on `ι`, `⊙`, `run`, `toHyp`.
+
+The axiom equations are exactly the rewrite rules GHC needs:
+
+```
+Compose (Lift id) f   ~   f          -- identity fusion, Lift id node never allocated
+Compose f (Compose g h) ~ Compose (Compose f g) h  -- associativity, tree shape irrelevant
+run (Compose (Knot f) g) = trace (f . untrace (run g))  -- Mendler: the critical fusion rule
+```
+
+Without the Mendler case, `Knot` doesn't fuse — it's buried under left-nested `Compose`
+and pays constructor allocation at every feedback point. With it, the feedback channel is
+a lazy function rather than a heap object.
+
+The quotient `TracedA / axioms` is not just a mathematical nicety. The axiom equations
+are the fusion rules. `HypA` makes them structural: under inlining the newtype wrapper
+disappears, `⊙` becomes direct function composition, and the traced structure costs
+nothing at runtime. Perfect deforestation — same guarantee as `build`/`foldr` stream
+fusion in `Data.List`, extended to the feedback case by the addition of `Fix`.

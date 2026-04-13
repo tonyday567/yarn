@@ -25,8 +25,7 @@ it give a genuinely different model?
 
 **Kidney-Wu 2026 tie-in**
 Specific examples from their paper (breadth-first search via Hofmann's algorithm,
-concurrency scheduler) mapped onto TracedA/HypA. Strengthens "hyperfunctions are
-traced catamorphisms."
+concurrency scheduler). 
 
 **Hasegawa cyclic sharing example**
 A small letrec modelled via Knot vs ordinary recursion. Grounds the "recursion from
@@ -38,6 +37,3 @@ The precise isomorphism between Proxy/streaming types and TracedA is not establi
 The m threading in Proxy sits outside the traced category structure. streaming may be
 a better starting point than Proxy directly.
 
-**Graded structure**
-Counting Knot depth gives a graded structure on TracedA terms. Implications for
-Okasaki queue methods noted but not formalised.

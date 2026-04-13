@@ -10,6 +10,7 @@ library
   exposed-modules:
     Hyp
     Hyp.Channel
+    IntC
     Traced
     Traces
 
