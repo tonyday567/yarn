@@ -4,9 +4,8 @@
 
 -- | The free traced monoidal category over any base category
 module Traced
-  ( -- * Traced
-    TracedA (..),
-    Traced,
+  ( -- * Circuit
+    Circuit (..),
     Trace (..),
     run,
   )
@@ -59,12 +58,12 @@ instance (Cochoice p, Choice p) => Trace p Either where
   untrace = right'
 
 -- | The Free Traced Monoidal Category
-data TracedA arr t a b where
-  Lift :: arr a b -> TracedA arr t a b
-  Compose :: TracedA arr t b c -> TracedA arr t a b -> TracedA arr t a c
-  Knot :: arr (t a b) (t a c) -> TracedA arr t b c
+data Circuit arr t a b where
+  Lift :: arr a b -> Circuit arr t a b
+  Compose :: Circuit arr t b c -> Circuit arr t a b -> Circuit arr t a c
+  Loop :: arr (t a b) (t a c) -> Circuit arr t b c
 
-instance (Category arr) => Category (TracedA arr t) where
+instance (Category arr) => Category (Circuit arr t) where
   id = Lift id
   (.) = Compose
 
@@ -75,7 +74,7 @@ instance (Category arr) => Category (TracedA arr t) where
 -- >>> let fmapped = fmap (* 2) f :: Traced Int Int
 -- >>> run fmapped 5
 -- 12
-instance Functor (TracedA (->) t a) where
+instance Functor (Circuit (->) t a) where
   fmap f = Compose (Lift f)
 
 -- | Profunctor: contravariant in input, covariant in output.
@@ -86,7 +85,7 @@ instance Functor (TracedA (->) t a) where
 -- >>> let f' = dimap (+ 1) (+ 100) f :: Traced Int Int
 -- >>> run f' 5
 -- 112
-instance Profunctor (TracedA (->) t) where
+instance Profunctor (Circuit (->) t) where
   dimap f g a = Compose (Lift g) (Compose a (Lift f))
   lmap f a = Compose a (Lift f)
   rmap g = Compose (Lift g)
@@ -98,7 +97,7 @@ instance Profunctor (TracedA (->) t) where
 -- >>> let v = Lift (\x -> x * 2) :: Traced Int Int
 -- >>> run (f <*> v) 5
 -- 15
-instance (Trace (->) t) => Applicative (TracedA (->) t x) where
+instance (Trace (->) t) => Applicative (Circuit (->) t x) where
   pure a = Lift (const a)
   f <*> v = Lift $ \x -> run f x (run v x)
 
@@ -108,23 +107,20 @@ instance (Trace (->) t) => Applicative (TracedA (->) t x) where
 -- >>> let k a = Lift (const (a + 1))
 -- >>> run (m >>= k) 5
 -- 11
-instance (Trace (->) t) => Monad (TracedA (->) t x) where
+instance (Trace (->) t) => Monad (Circuit (->) t x) where
   m >>= k = Lift $ \x -> run (k (run m x)) x
 
--- | The classical product traced of ArrowLoop
-type Traced = TracedA (->) (,)
-
--- | Evaluate a traced arrow to its underlying arrow.
+-- | Evaluate a circuit to its underlying arrow.
 --
--- >>> let f = Compose (Lift (+ 1)) (Lift (* 2)) :: Traced Int Int
+-- >>> let f = Compose (Lift (+ 1)) (Lift (* 2)) :: Circuit (->) (,) Int Int
 -- >>> run f 5
 -- 11
 --
--- >>> let g = Knot (\(fibs, i) -> (0 : 1 : zipWith (+) fibs (drop 1 fibs), fibs !! i)) :: Traced Int Int
+-- >>> let g = Loop (\(fibs, i) -> (0 : 1 : zipWith (+) fibs (drop 1 fibs), fibs !! i)) :: Circuit (->) (,) Int Int
 -- >>> run g 10
 -- 55
-run :: (Category arr, Trace arr t) => TracedA arr t x y -> arr x y
+run :: (Category arr, Trace arr t) => Circuit arr t x y -> arr x y
 run (Lift f) = f
-run (Compose (Knot f) g) = trace (f . untrace (run g))
+run (Compose (Loop f) g) = trace (f . untrace (run g))
 run (Compose f g) = run f . run g
-run (Knot k) = trace k
+run (Loop k) = trace k

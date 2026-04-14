@@ -13,8 +13,8 @@ module Hyp
     traceHyp,
 
     -- * Conversion
-    fromHyp,
-    toHyp,
+    degen,
+    unfold,
 
     -- * Helpers
     base,
@@ -27,7 +27,7 @@ where
 import Control.Arrow (Arrow, arr)
 import Control.Category (Category (..))
 import Data.Function (fix)
-import Traced (Traced, TracedA (..))
+import Traced (Circuit (..))
 import Prelude hiding (id, (.))
 
 -- | Hyperfunction over a base arrow @arr@.
@@ -82,12 +82,12 @@ traceHyp :: Hyp (a, b) (a, c) -> Hyp b c
 traceHyp h = rep $ \b ->
   snd $ fix $ \(a, _) -> invoke h (HypA (const (a, b)))
 
--- | Unfold @Hyp@ back to @Traced@ syntax.
-fromHyp :: Hyp a b -> Traced a b
-fromHyp h = Lift (lower h)
+-- | Degenerate: lower a hyperfunction to a circuit.
+degen :: Hyp a b -> Circuit (->) (,) a b
+degen h = Lift (lower h)
 
--- | Lift @Traced@ to @Hyp@ syntax.
-toHyp :: Traced a b -> Hyp a b
-toHyp (Lift f) = rep f
-toHyp (Compose f g) = toHyp f . toHyp g
-toHyp (Knot k) = traceHyp (rep k)
+-- | Unfold a circuit to a hyperfunction.
+unfold :: Circuit (->) (,) a b -> Hyp a b
+unfold (Lift f) = rep f
+unfold (Compose f g) = unfold f . unfold g
+unfold (Loop k) = traceHyp (rep k)
