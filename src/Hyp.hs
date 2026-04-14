@@ -10,7 +10,6 @@ module Hyp
     stream,
     push,
     compose,
-    traceHyp,
 
     -- * Conversion
     degen,
@@ -21,12 +20,12 @@ module Hyp
     rep,
     invoke',
     lower,
-    untraceHyp,
   )
 where
 
 import Control.Arrow (Arrow, arr)
 import Control.Category (Category (..))
+import Data.Bifunctor (second)
 import Data.Function (fix)
 import Traced (Circuit (..), Trace (..))
 import Prelude hiding (id, (.))
@@ -77,23 +76,10 @@ invoke' f g = run (zipper f g)
 lower :: Hyp a b -> (a -> b)
 lower h a = invoke h (HypA (const a))
 
--- | Trace a hyperfunction: implement feedback loop via fixed point over paired state.
--- Converts a hyperfunction that threads state through computation into one that closes the feedback loop.
-traceHyp :: Hyp (a, b) (a, c) -> Hyp b c
-traceHyp h = rep $ \b ->
-  snd $ fix $ \(a, _) -> invoke h (HypA (const (a, b)))
-
--- | Untracing lifts a hyperfunction into the paired tensor.
--- Apply the hyperfunction to the second component, threading the first unchanged.
-untraceHyp :: Hyp b c -> Hyp (a, b) (a, c)
-untraceHyp h = rep (second (lower h))
-  where
-    second f (a, b) = (a, f b)
-
 -- | Hyp is an instance of the Trace typeclass for the product tensor.
 instance Trace Hyp (,) where
-  trace = traceHyp
-  untrace = untraceHyp
+  trace h = rep $ \b -> snd $ fix $ \(a, _) -> lower h (a, b)
+  untrace = rep . second . lower
 
 -- | Degenerate: lower a hyperfunction to a circuit.
 degen :: Hyp a b -> Circuit (->) (,) a b
@@ -103,4 +89,4 @@ degen h = Lift (lower h)
 unfold :: Circuit (->) (,) a b -> Hyp a b
 unfold (Lift f) = rep f
 unfold (Compose f g) = unfold f . unfold g
-unfold (Loop k) = traceHyp (rep k)
+unfold (Loop k) = rep $ \b -> snd $ fix $ \(a, _) -> lower (rep k) (a, b)
