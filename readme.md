@@ -285,6 +285,35 @@ When a Knot appears at the head of a Compose, you must inspect it first to satis
 
 Without this case, the universal property is violated: `Knot` collapses to the degenerate model.
 
+Ran K F as an end is:
+Ran K F x = ∫_c Hom(K c, x) → F c
+Substituting K = Const a, F = Const b:
+Ran (Const a) (Const b) x = ∫_c Hom(Const a c, x) → Const b c
+                           = ∫_c Hom(a, x) → b
+                           = Hom(a, x) → b
+The end over c vanishes because neither Const a c nor Const b c depend on c. So:
+Ran (Const a) (Const b) x = (a -> x) -> b
+Which is a continuation — give me a function from a to the answer type x, and I'll give you a b.
+
+Now Fix of that functor would be:
+
+HypA a b  =  Fix (Ran (Const a) (Const b))
+
+where:
+
+Ran (Const a) (Const b) x  =  (a -> x) -> b       -- end formula, c vanishes
+
+Fix ties the knot on x, replacing it with the whole type flipped:
+
+Fix (Ran (Const a) (Const b))  =  (Fix (Ran (Const b) (Const a)) -> b)
+                                =  (HypA b a -> b)
+                                =  HypA a b
+The fixpoint is the self-referential duality: to produce a b you invoke your own dual HypA b a. The Ran gives you the continuation structure, the Fix gives you the knot.
+
+
+So the question is whether Traced a b ~ Ran (Const a) (Const b) is established precisely enough to support that chain of reasoning. If it is, then Hyp a b ~ Fix (Traced a b) would be a theorem, and toHyp would be the algebra map — which is close to but not quite the same as saying toHyp is Fix.
+
+
 ## Open Work
 
 ⟝ Prove that the Mendler case in `run` is exactly the counit naturality of `Ran(Const a)(Const b)`, formalized.
@@ -621,3 +650,4 @@ for the profunctor instances (`Costrong`, `Strong`, `Cochoice`, `Choice`) on `Tr
 
 The `Trace` typeclass is not an ad hoc design — it is the interface of a costrong/strong
 adjoint pair, formalised independently in the optics literature.
+
