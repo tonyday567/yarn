@@ -21,13 +21,14 @@ module Hyp
     rep,
     invoke',
     lower,
+    untraceHyp,
   )
 where
 
 import Control.Arrow (Arrow, arr)
 import Control.Category (Category (..))
 import Data.Function (fix)
-import Traced (Circuit (..))
+import Traced (Circuit (..), Trace (..))
 import Prelude hiding (id, (.))
 
 -- | Hyperfunction over a base arrow @arr@.
@@ -81,6 +82,18 @@ lower h a = invoke h (HypA (const a))
 traceHyp :: Hyp (a, b) (a, c) -> Hyp b c
 traceHyp h = rep $ \b ->
   snd $ fix $ \(a, _) -> invoke h (HypA (const (a, b)))
+
+-- | Untracing lifts a hyperfunction into the paired tensor.
+-- Apply the hyperfunction to the second component, threading the first unchanged.
+untraceHyp :: Hyp b c -> Hyp (a, b) (a, c)
+untraceHyp h = rep (second (lower h))
+  where
+    second f (a, b) = (a, f b)
+
+-- | Hyp is an instance of the Trace typeclass for the product tensor.
+instance Trace Hyp (,) where
+  trace = traceHyp
+  untrace = untraceHyp
 
 -- | Degenerate: lower a hyperfunction to a circuit.
 degen :: Hyp a b -> Circuit (->) (,) a b
