@@ -108,3 +108,14 @@ unsecond' f a = snd (fix (\(c, _) -> f (c, a)))
 ```
 
 This pattern is often seen in refactorings.
+
+## Running the examples
+
+```haskell
+main :: IO ()
+main = do
+  putStrLn "biasedAcc 5:"
+  print (biasedAcc 5)
+  putStrLn "minCoins [1,2,6,24,1024] 40:"
+  print (minCoins [1,2,6,24,1024] 40)
+```
