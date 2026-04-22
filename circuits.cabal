@@ -48,6 +48,8 @@ library
   exposed-modules:
     Hyp
     Circuit
+    Circuit.GoI
+    Circuit.GoI.Example
 
   build-depends:
     base >=4.18 && <5,

@@ -124,6 +124,8 @@ fix f = f (fix f)
 
 ---
 
+⟝ switch rep to lift
+
 ### Axiom 2 — Identity of #
 ```
 f # rep id = f = rep id # f

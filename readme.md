@@ -1,33 +1,46 @@
 # circuits: tracing hyperfunctions
 
-**The foundation:** `Circuit` (initial), `Hyp` (final), and their adjunction
+A `Circuit` is a GADT and is the free traced monoidal category over an arrow, with a choice of a trace operation associated with the tensor of the category.
 
-| Component              | Location      | Role                              |
-|------------------------|---------------|-----------------------------------|
-| `Circuit`              | Circuit.hs    | Free traced category (GADT)       |
-| `Hyp`                  | Hyp.hs        | Church encoding of `Circuit`      |
-| `lower . unfold = run` |               | The traced adjunction             |
-| `Hyp a b = Fix (Ran (Const a) (Const b))` |  | Kan extension characterisation |
+``` haskell
+Circuit arrow tensor a b 
+```
 
-**The axioms:** Traced monoidal category semantics
+A hyperfunction (Hyp) is the Church encoding of a Circuit and, as such, might represent an efficient and performant target for broad classes of computation requiring tensor elimination, such as resource acquisition, parsing, backpropogation and tensor calculii of all manner. 
 
-- [axioms-traced.md](other/axioms-traced.md) — JSV axioms with proofs
+## narrative coverage
+
+This narrative covers foundational content for understanding the library, written here in development form.
+
+Circuit ⟜ Circuit arrow tensor a b ⟜ Free traced category GADT
+Hyp ⟜ Hyperfunction ⟜ Church encoding of Circuit 
+The trace adjunction ⟜ `lower . unfold = run`
+Kan extension ⟜ `Circuit arrow tensor a b = Ran (Const a) (Const b)` 
+
+axioms ⟜ circuit and hyperfunction semantics
+- [axioms-traced.md](other/axioms-traced.md) — nlab axioms with proofs
 - [axioms-hyp.md](other/axioms-hyp.md) — Kidney–Wu axioms with proofs
 
 ## References
 
+⟝ nlab reference here
+
 - Joyal, Street & Verity, "Traced monoidal categories" (Math. Proc. Camb. 1996)
 - Hasegawa, "Recursion from cyclic sharing: traced monoidal categories" (1997)
-- Launchbury, Krstic & Sauerwein, "Hyperfunctions" (JFP 2013)
-- Kidney & Wu, "Hyperfunctions and the monad of streams" (2026)
+- Launchbury, Krstic & Sauerwein, "Hyperfunctions" (2013) (LKS)
+- Kidney & Wu, "Hyperfunctions and the monad of streams" (2026) (KW)
 - Balan & Pantelimon, "The hidden strength of costrong functors" (2025)
-- van der Ploeg & Kiselyov, "Reflection without remorse" (Haskell 2014)
+- van der Ploeg & Kiselyov, "Reflection without remorse" (2014) (RwR)
 
 ---
 
-## The Little Language
+## A little Language
 
-Section 7 of the LKS paper introduces a small axiomatic language for hyperfunctions:
+Section 7 of LKS introduces a small axiomatic language for hyperfunctions with the following operatots and axioms.
+
+### semantics
+
+Over an abstract type, the semantics (operations, interpretations, implementations) are composing, lifting, running and prepending.
 
 ```haskell
 (#)  :: H b c -> H a b -> H a c
@@ -36,32 +49,184 @@ run  :: H a a -> a
 (<<) :: (a -> b) -> H a b -> H a b
 ```
 
-with seven axioms. `#` is composition. `lift` embeds a plain function. `run` closes a feedback loop and extracts a value. `<<` prepends a function to a hyperfunction.
+⟝ switch to modern unicode.
 
-Two observations simplify things. First, `<<` is not a new primitive — it is `#` with a `lift` on the left:
+### axioms
+
+axiom 1 ⟜ associativity ⟜ `(f # g) # h = f # (g # h)`
+axiom 2 ⟜ lifted identity ⟜ `f # lift id = f = lift id # f`
+axiom 3 ⟜ lift is a functor ⟜ `lift (f . g) = lift f # lift g`
+axiom 4 ⟜ run is fixed-point ⟜ `run (lift f) = fix f`
+axiom 5 ⟜ prefix composition ⟜ `(f << p) # (g << q) = (f . g) << (p # q)`
+axiom 6 ⟜ run with prefix ⟜ `run ((f << p) # q) = f (run (q # p))`
+
+### free category
+
+The first three axioms; associativity, identity and functorality of lift are the axioms that construct a free category, out of lift and (#).
+
+### lift
+
+LKS has seven axioms listed but this includes the lift equation which is classified instead as a semantic:
+
+```haskell
+lift :: (a → b) → (a ↬ b)
+lift f = f << lift f
+```
+
+Lifting into Hyp constructs hyperfunctions by repeatedly applying `<<` under lazy evaluation. KW characterise this operator as a `push`, LKS as a left action prepend.
+
+## (<<) is a compound semantic.
+
+⟝ motivation for completeness and simpleness (universal properties?)
+
+(<<) is not a primitive operator. It can be split into lifting and composing.
 
 ```haskell
 f << p  =  lift f # p
 ```
 
-Axiom 6 (`lift f = f << lift f`) is then the coinductive unrolling of `lift`, and Axiom 7 becomes a statement about `#` and `run` alone. Second, Axioms 1–3 are the axioms of a category: associativity, identity, and functoriality of `lift`.
+`lift f = f << lift f` is then a coinductive unrolling of `lift`.
 
-What remains — Axioms 4, 5, 6, 7 — governs the interaction of `run` and `<<` with the feedback structure. These are the traced category axioms: vanishing, superposing, and sliding.
+## run is a compound semantic.
 
-The 2013 paper notes that without `<<` and its axioms, the system has a trivial model: `H a b = a -> b`, with `#` as function composition and `lift = id`. The axioms for `<<` are precisely what rule this out.
+run :: H a a -> a 
+
+can be thought of as doing two things:
+
+lower ⟜ transforming a H a b to an ordinary function. ⟜ lower :: H a b -> (a -> b)
+fix ⟜ tie the fixpoint ⟜ fix :: (a -> a) -> a ⟜ fix f = f (fix f)
+
+So run can be decomposed:
+
+``` haskell
+run = fix . lower
+```
+
+## simplifications
+
+Substituting `f << p = lift f # p` and `run = fix . lower` rewrites axioms 4, 5 and 6.
+
+### axiom 4 — faithfulness
+
+``` haskell
+run (lift f) = fix f
+fix (lower (lift f)) = fix f
+
+-- under fixpoint conditions:
+lower (lift f) = f
+lower . lift = id
+```
+
+Axiom 4 becomes the unit of an adjunction between hyperfunctions and ordinary
+functions: `lower` is left inverse to `lift`. The embedding is faithful — lifting a
+function and then observing it returns exactly what you started with. This is a
+conservativity condition, not a constructor: it constrains interpretation, it does
+not add structure.
+
+### axiom 5 — centrality of lifted arrows
+
+``` haskell
+(f << p) # (g << q) = (f . g) << (p # q)
+
+-- substituting f << p = lift f # p:
+(lift f # p) # (lift g # q) = lift (f . g) # (p # q)
+```
+
+The right side reduces by associativity and functoriality of `lift`:
+
+```
+lift (f . g) # (p # q)  =  (lift f # lift g) # (p # q)   -- axiom 3
+                        =  lift f # (lift g # (p # q))   -- axiom 1
+```
+
+The left side by associativity:
+
+```
+(lift f # p) # (lift g # q)  =  lift f # (p # (lift g # q))   -- axiom 1
+```
+
+Cancelling `lift f #`, axiom 5 reduces to:
+
+``` haskell
+p # (lift g # q) = lift g # (p # q)
+```
+
+**Lifted arrows are central** — they slide past any hyperfunction under composition.
+This is not derivable from axioms 1 and 3; it is an independent property of how
+`lift` embeds into `#`. Categorically it is the symmetric braiding: pure arrows
+carry no feedback channel to obstruct a swap, so they commute past everything. A
+non-braided setting would require an explicit `Braid` constructor to state this.
+
+### axiom 6 — feedback
+
+Substituting `run = fix . lower` and cancelling `fix` (which appears uniformly on
+both sides), then substituting `<<`:
+
+``` haskell
+run ((f << p) # q) = f (run (q # p))
+fix (lower ((f << p) # q)) = f (fix (lower (q # p)))
+lower ((f << p) # q) = f . lower (q # p)
+lower ((lift f # p) # q) = f . lower (q # p)
+```
+
+The `q # p` on the right is a swap of `p` and `q`, not just reassociation. Axiom 6
+is not commutativity — it is the sliding axiom of a traced monoidal category,
+applied to a `lift f` that carries a hidden feedback channel threaded through both
+`p` and `q`. The channel is implicit: it lives in the way `run` ties the knot.
+
+### axiom categorisation
+
+After substitution, the six axioms partition into four structural roles:
+
+| Axioms | Substituted form | Role | Manifestation |
+|--------|------------------|------|---------------|
+| 1, 2, 3 | `(f # g) # h = f # (g # h)`, `f # lift id = f = lift id # f`, `lift (f . g) = lift f # lift g` | Free category | `Lift`, `Compose` constructors |
+| 4 | `lower . lift = id` | Faithful embedding | `run (Lift f) = f` on interpretation |
+| 5 | `p # (lift g # q) = lift g # (p # q)` | Centrality / braiding | Free from symmetry of tensor |
+| 6 | `lower ((lift f # p) # q) = f . lower (q # p)` | Feedback / traced | `Loop` constructor, Mendler case |
+
+Axioms 4 and 5 introduce no new constructors. Axiom 4 constrains interpretation;
+axiom 5 holds automatically when the tensor is symmetric. Axiom 6 is the only
+axiom that contributes structure: the `Loop` constructor for the feedback channel
+and the Mendler case in `run` that mediates it via `trace` and `untrace`.
+
+### the abstraction came last
+
+This categorisation is retrospective. The actual path was:
+
+1. Axiom 6 has a hidden channel implicit in how `run` ties the knot.
+2. Costrength suggested naming the channel as an explicit tensor `t`.
+3. `Loop :: arr (t a b) (t a c) -> Circuit arr t b c` was a guess.
+4. The Mendler case `run (Compose (Loop f) g) = trace (f . untrace (run g))` was
+   hacked in to make the types line up.
+5. What fell out was recognised as a free traced monoidal category.
+
+"Free traced monoidal category", the sliding axiom, and the `Trace` typeclass are
+the retrospective description of what the hack turned out to be — not the design
+principle.
+
 
 ---
 
-## Why This Axiom System: The Fixed-Point Structure
 
-The structure `lift f = f << lift f` is exactly the Y combinator unrolled one step:
+
+
+## Why axioms 4, 5 & 6? 
+
+The 2013 paper notes that without `<<` and its axioms, the system has a trivial model: `H a b = a -> b`, with `#` as function composition and `lift = id`. The axioms for `<<` are precisely what rule this out.
+
+One clue is that the structure `lift f = f << lift f` is exactly the Y combinator unrolled one step:
 
 ```
 Y f = f (Y f)
-lift f = Trace f (lift f)    -- same structure
+lift f = Trace f (lift f)
 ```
 
+⟝ there is a complete switch here to hyperfunctions as the object, but we were narrating lift, not hyperfunctions.
+
 Hyperfunctions are not all of lambda calculus — they represent the **fixed-point structure alone**: the part that requires domains or coinduction to make sense. This is why hyperfunctions don't have a set-theoretic interpretation. The axioms for `<<` enforce this feedback structure operationally.
+
+⟝ There is no a or b or any diagonal.
 
 The consequence: `run` on the diagonal (where `a = b`) extracts a fixed point via `run (lift f) = fix f` (Axiom 4). The axiom system is fundamentally about recursion and how to reify it in the type system.
 
@@ -198,7 +363,44 @@ unfold (Compose f g) = unfold f . unfold g
 unfold (Loop f)      = lift (trace f)
 ```
 
-`unfold` is the unique traced functor from the initial object into `Hyp`, given by the universal property of `Circuit`. It does not need a Mendler case because `Hyp`'s `(.)` already satisfies sliding.
+`unfold` is the unique traced functor from the initial object into `Hyp`, given by the universal property of `Circuit`. It does not need a Mendler case — the `Compose (Loop f) g` pattern reduces through the general `Compose` case:
+
+```
+unfold (Compose (Loop f) g)
+  = unfold (Loop f) . unfold g    -- general Compose
+  = lift (trace f) . unfold g     -- Loop case
+```
+
+No explicit `untrace`. Compare to `run`, which does apply `untrace`:
+
+```
+run (Compose (Loop f) g) = trace (f . untrace (run g))
+```
+
+The two agree through the sliding axiom of `Trace (->) t`:
+
+```
+trace (f . untrace g) = trace f . g
+```
+
+For `(,)`, `untrace = second`, and `trace (f . second g) = trace f . g` is the definition of sliding. For `Either`, `untrace = fmap` on `Right`, and the same equation holds. In both concrete cases `untrace = fmap` — the minimal action on the non-feedback channel — and it vanishes once pulled out of the `trace`.
+
+Unfolding `lower . unfold` on the same term:
+
+```
+lower (unfold (Compose (Loop f) g))
+  = lower (lift (trace f) . unfold g)
+  = lower (lift (trace f)) . lower (unfold g)    -- lower is a functor
+  = trace f . run g                              -- axiom 4 + induction
+  = trace (f . untrace (run g))                  -- sliding axiom
+  = run (Compose (Loop f) g)
+```
+
+The triangle `lower . unfold = run` holds because the sliding axiom closes it. The
+`untrace` that `run` threads explicitly through `(->)` is absorbed into `Hyp`'s
+composition `f . g = Hyp (\h -> invoke f (g . h))`, which threads the continuation
+`h` through `g . h` on every unfolding — exactly the work `untrace = fmap` does, but
+structural rather than operational.
 
 The other direction is the forgetful map:
 
@@ -261,15 +463,15 @@ Every effects library that tries to do simultaneity on top of `Either` (merge, z
 
 ## Axiom Correspondence
 
-| LKS Axiom | JSV / Hasegawa counterpart | `Circuit` location | Notes |
-|-----------|----------------------------|--------------------|-------|
-| 1: `(f # g) # h = f # (g # h)` | Monoidal associativity | `Category` instance | Pre-condition |
-| 2: `f # self = f = self # f` | Vanishing I | `Lift id` | `self = lift id` is identity |
-| 3: `lift (f . g) = lift f # lift g` | Functor law | `Lift` | Strict monoidal functor |
-| 4: `run (lift f) = fix f` | Yanking (cartesian specialisation) | `run (Loop ...)` | Trace induces `fix` in cartesian case |
-| 5: `(f << p) # (g << q) = (f.g) << (p # q)` | Superposing | `Compose` + `Lift` | `<<` encodes feedback channel |
-| 6: `lift f = f << lift f` | Vanishing II / coinductive unfolding | `Lift` under `Compose` | Loop unrolling |
-| 7: `run ((f << p) # q) = f (run (q # p))` | **Sliding** | `run (Compose (Loop f) g)` | Demands `Loop` |
+| LKS Axiom                                   | JSV / Hasegawa counterpart           | `Circuit` location         | Notes                                 |
+|---------------------------------------------|--------------------------------------|----------------------------|---------------------------------------|
+| 1: `(f # g) # h = f # (g # h)`              | Monoidal associativity               | `Category` instance        | Pre-condition                         |
+| 2: `f # self = f = self # f`                | Vanishing I                          | `Lift id`                  | `self = lift id` is identity          |
+| 3: `lift (f . g) = lift f # lift g`         | Functor law                          | `Lift`                     | Strict monoidal functor               |
+| 4: `run (lift f) = fix f`                   | Yanking (cartesian specialisation)   | `run (Loop ...)`           | Trace induces `fix` in cartesian case |
+| 5: `(f << p) # (g << q) = (f.g) << (p # q)` | Superposing                          | `Compose` + `Lift`         | `<<` encodes feedback channel         |
+| 6: `lift f = f << lift f`                   | Vanishing II / coinductive unfolding | `Lift` under `Compose`     | Loop unrolling                        |
+| 7: `run ((f << p) # q) = f (run (q # p))`   | **Sliding**                          | `run (Compose (Loop f) g)` | Demands `Loop`                        |
 
 LKS Axiom 7 is the sliding/naturality axiom. Without `Loop`, a free category built from `Lift` and `Compose` alone cannot satisfy it.
 
@@ -459,7 +661,8 @@ The triangle `lower . unfold = run` is the unit-counit identity of this adjuncti
 
 - Prove that the Mendler case in `run` is exactly the counit naturality of `Ran (Const a) (Const b)`, formalised.
 - Establish the precise isomorphism `Circuit a b ~ Ran (Const a) (Const b)` as a theorem, not a diagram observation.
+- Establish that `Loop` is the unique reifier of the hidden channel in axiom 6 — i.e. `unfold` is the unique traced functor `Circuit -> Hyp`, not merely a traced functor. The freeness of `Circuit` as a traced monoidal category depends on this.
+- Clarify whether `Fix (Circuit (->) t)` is well-typed at all, and if so, whether `Hyp a b ~ Fix (Circuit (->) t a b)` is an iso or strict inequality. `unfold` exists but `degen` is lossy, so the two encodings are not isomorphic on the nose — the precise adjunction needs to be stated.
 - The Geometry of Interaction connection (Int(C) completion, `callCC`, shift/reset) is a conjecture not yet developed.
 - The graded structure counting `Loop` depth and its implications for Okasaki queue amortisation are noted but not formalised.
 - Map concrete Kidney–Wu examples (breadth-first search via Hofmann, concurrency scheduler) onto `Circuit`/`Hyp`.
-

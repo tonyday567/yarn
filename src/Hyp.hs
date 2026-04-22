@@ -23,10 +23,6 @@ import Prelude hiding (id, (.))
 
 newtype Hyp a b = Hyp { invoke :: Hyp b a -> b }
 
-instance {-# OVERLAPPING #-} (Trace (->) a) => Trace Hyp a where
-  trace = lift . trace . lower
-  untrace = lift . untrace . lower
-
 instance {-# OVERLAPPING #-} Category Hyp where
   id = lift id
   f . g = Hyp $ \h -> invoke f (g . h)
@@ -51,5 +47,6 @@ degen h = Lift (lower h)
 
 unfold :: Circuit (->) (,) a b -> Hyp a b
 unfold (Lift f) = lift f
+unfold (Compose (Loop f) g) = lift (trace f) . unfold g
 unfold (Compose f g) = unfold f . unfold g
 unfold (Loop f) = lift (trace f)
