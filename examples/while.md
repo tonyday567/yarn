@@ -1,76 +1,197 @@
-⟝ while 
+⟝ circuit-basic 
 
-# While Loop as Self-Referential Array
+# While Loop — Hyper vs Circuit
 
-harpie's `Array s` is `Representable` — `tabulate` allocates a `Vector` of
-`n = sizeOf @s` cells, each a lazy thunk. A cell can read other cells via
-`index` (or `!`).  This is the whole memoization story. No Hyper needed.
-
----
-
-## While Loop
+The simplest recursive pattern: a step function `s -> Either r s`, iterate
+until `Left r`, return `r`.  This card shows the same loop in both encodings.
 
 ```haskell
-{-# LANGUAGE DataKinds #-}
-
-import Harpie.Fixed (Array, tabulate, index, (!))
-import Harpie.Shape (Fins (..), fins, KnownNats)
-
-whileLoop
-  :: forall n. KnownNats n
-  => (a -> a)        -- ^ step function
-  -> (a -> Bool)     -- ^ continue condition
-  -> a               -- ^ initial state
-  -> Array '[n] a    -- ^ memo table, states at steps 0..n-1
-whileLoop step cont x0 = tabulate $ \(UnsafeFins [i]) ->
-  if i == 0
-    then x0
-    else let prev = whileLoop step cont x0 ! fins [i - 1]
-         in if cont prev then step prev else prev
+-- $setup
+-- >>> import Circuit (Hyper (..), Circuit (..), Trace (..), run, lower)
+-- >>> import Circuit.Hyper qualified as Hyper
+-- >>> import Circuit.Circuit qualified as Circuit
+-- >>> import Prelude hiding (id, (.))
 ```
 
-`tabulate` allocates `n` cells. Cell 0 is `x0`. Cell `i` reads cell `i-1`,
-applies `step` if `cont prev` holds, otherwise freezes at the terminal state.
-Asking for cell `k` forces cells `0..k` exactly once each.
+---
+
+## The Step Function
+
+```haskell
+-- | One step: return result (Left) or continue with new state (Right).
+type Step s r = s -> Either r s
+```
+
+Example: count down from `n`, return the count of steps:
+
+```haskell
+countdown :: Step Int Int
+countdown n
+  | n <= 0    = Left 0       -- done
+  | otherwise = Right (n - 1)  -- continue
+```
 
 ---
 
-## Example: Collatz Sequence
+## Hyper Version
+
+The recursion lives in `run` — the self-referential knot. The step function
+is used directly, with the continuation `k` threaded by `run`.
 
 ```haskell
-collatz :: forall n. KnownNats n => Int -> Array '[n] Int
-collatz x0 = whileLoop @n step cont x0
+whileH :: Step s r -> s -> r
+whileH step = run h
   where
-    step n = if even n then n `div` 2 else 3 * n + 1
-    cont n = n /= 1
+    h :: Hyper (s -> r) (s -> r)
+    h = Hyper $ \k s ->
+      case step s of
+        Left r  -> r
+        Right s' -> invoke k h s'
+```
 
--- >>> collatz @20 6 ! fins [0]   → 6
--- >>> collatz @20 6 ! fins [1]   → 3
--- >>> collatz @20 6 ! fins [8]   → 1   (reached 1, froze)
+Trace: `run h s0 = invoke h (Hyper run) s0`. The first call unwraps `h`,
+evaluates `step s0`. If `Left r`, returns `r`. If `Right s1`, calls
+`invoke (Hyper run) h s1 = run h s1`. The continuation `k = Hyper run` is
+`run` repackaged — the knot closes through the type.
+
+```haskell
+-- >>> whileH countdown 5
+-- 0
+-- >>> whileH countdown 0
+-- 0
 ```
 
 ---
 
-## Why This Works
+## Circuit Version
 
-`tabulate :: (Fins '[n] -> a) -> Array '[n] a` calls `V.generate n f`.
-The `Vector` is allocated eagerly but the *elements* are lazy — each is
-`f i`, stored as a thunk.
+The recursion lives in `trace` — the `Trace (->) Either` instance iterates
+the feedback channel until it produces `Right`. The step function must be
+adapted: `Either` in `Loop` uses `Left` as the feedback channel and `Right`
+as output. Our `Step` uses `Left` as output and `Right` as continue — so we
+swap.
 
-When you `!` (index) into the array, the thunk is forced. If that thunk
-reads other cells (like `whileLoop ... ! fins [i-1]`), those thunks are
-forced in turn. The chain resolves on demand, each cell computed at most
-once.
+```haskell
+whileC :: Step s r -> s -> r
+whileC step = lower (Loop (Lift step'))
+  where
+    step' :: Either s s -> Either s r
+    step' = either swapRL swapRL
+    -- Both Left (feedback) and Right (fresh input) carry an s.
+    -- Apply step, then swap: continue → Left (feedback), done → Right (output).
+    swapRL (Left r)  = Right r   -- result  → output channel
+    swapRL (Right s) = Left s    -- continue → feedback channel
+```
 
-This is the same mechanism as a lazy list `iterate`, but with O(1) random
-access rather than O(n) spine traversal. The `Array` is the memo table.
+Equivalently, using `trace` directly (without `Circuit` constructors):
+
+```haskell
+whileT :: Step s r -> s -> r
+whileT step = trace step'
+  where step' = either swapRL swapRL
+        swapRL (Left r)  = Right r
+        swapRL (Right s) = Left s
+```
+
+Trace: `trace step' s0` feeds `Right s0` to `step'`. If `step s0 = Left r`,
+then `step' (Right s0) = Right r` — trace returns `r`. If `step s0 = Right s1`,
+then `step' (Right s0) = Left s1` — trace feeds `Left s1` back to `step'`,
+iterating.
+
+```haskell
+-- >>> whileC countdown 5
+-- 0
+-- >>> whileC countdown 0
+-- 0
+-- >>> whileT countdown 5
+-- 0
+```
 
 ---
 
-## Backpropagation
+## Where the Recursion Lives
 
-The user's observation about "lazy load of the answer" is exactly right.
-`tabulate` doesn't compute anything — it allocates `n` pointers to thunks.
-The first `!` forces a chain: cell `k` → cell `k-1` → ... → cell 0.
-Each cell in the chain is forced once, then cached. Subsequent `!` at any
-position in the chain returns the cached value instantly.
+```haskell
+-- Hyper: run ties the knot
+run :: Hyper a a -> a
+run h = invoke h (Hyper run)       -- self-reference in the type
+
+-- Circuit: trace iterates the channel
+trace :: (Either a b -> Either a c) -> b -> c
+trace f b = case f (Right b) of
+  Right c -> c                     -- done
+  Left a  -> trace f a             -- feedback
+```
+
+| Aspect | Hyper | Circuit |
+|--------|-------|---------|
+| Recursion site | `run` (self-knot) | `trace` (channel iteration) |
+| Step shape | `s -> Either r s` (unchanged) | `Either s s -> Either s r` (channel-adapted) |
+| Continuation | `k :: Hyper (s→r) (s→r)`, passed explicitly | Implicit in `Either` Left/Right |
+| Termination | `Left r` — ignore continuation | `Right c` — trace stops iterating |
+| Continue | `Right s'` — call `invoke k h s'` | `Left a` — trace feeds back |
+
+---
+
+## The Convention Swap
+
+Both encodings use `Either` but with opposite conventions:
+
+| Branch | `Step s r` (while loop) | `Trace (->) Either` (Circuit) |
+|--------|-------------------------|-------------------------------|
+| `Left` | **Result** — done, return `r` | **Feedback** — iterate again |
+| `Right` | **Continue** — next state `s` | **Output** — done, return `c` |
+
+This is why `swapRL` is needed to bridge them. The hyperfunction version
+avoids Either altogether inside the loop body — the continuation is passed
+explicitly as `k`, and the step just returns a value or a new state.
+
+---
+
+## A Larger Example: Sum [1..n]
+
+```haskell
+sumStep :: Step (Int, Int) Int     -- (current n, accumulated sum)
+sumStep (n, acc)
+  | n <= 0    = Left acc
+  | otherwise = Right (n - 1, acc + n)
+
+-- >>> whileH sumStep (5, 0)
+-- 15
+-- >>> whileC sumStep (5, 0)
+-- 15
+```
+
+---
+
+## The Mendler Case in Action
+
+For `Circuit`, the `Loop` constructor is eliminated by `lower`. The
+Mendler case is what makes this work when `Loop` appears on the left
+of a `Compose`:
+
+```haskell
+lower (Compose (Loop f) g) = trace (f . untrace (lower g))
+```
+
+For our simple `whileC`, there is no `Compose` — just a bare `Loop`:
+
+```haskell
+lower (Loop (Lift step'))
+  = trace step'                    -- base case, no Mendler needed
+```
+
+The Mendler case comes into play when you compose loops:
+
+```haskell
+-- Two loops in sequence: run whileC step1, feed result to whileC step2
+pipeline :: Circuit (->) Either s s
+pipeline = Loop (Lift step2') `Compose` Loop (Lift step1')
+
+lower pipeline
+  = trace (step2' . untrace (lower (Loop (Lift step1'))))   -- Mendler
+  = trace (step2' . untrace (trace step1'))
+```
+
+This is where `Circuit` earns its keep — composing feedback structures.
+For a single while loop, `trace` directly is simplest.
