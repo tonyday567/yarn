@@ -112,14 +112,14 @@ The continuation `h` is threaded through `g . h` before `invoke f` sees it, on e
 There is an equivalent formulation via right Kan extensions (Icelandjack). For constant functors `Const a` and `Const b`:
 
 ```
-Ran (Const a) (Const b) x  ≅  ∀c. (a → x) → b
+Ran (Const a) (Const b) x  ≅  ∀c. (x → a) → b
 ```
 
 Applying `Fix` to collapse this:
 
 ```
 Fix (Ran (Const a) (Const b))
-  ≅ (a → Fix (Ran (Const a) (Const b))) → b
+  ≅ (x → Fix (Ran (Const a) (Const b))) → b
   ≅ Hyper a b
 ```
 

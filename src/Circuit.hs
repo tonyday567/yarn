@@ -16,15 +16,39 @@ module Circuit
   ( -- * Circuit (initial encoding)
     Circuit (..),
     reify,
+    lower,
+    push,
     toHyper,
     hyperfy,
 
     -- * Hyper (final encoding)
     Hyper (..),
+    type (↬),
     run,
     base,
     lift,
-    push,
+    hyperAp,
+    hyperBind,
+    valueFix,
+    hyperFix,
+
+    -- * Coinductive helpers
+    unroll,
+    roll,
+    ana,
+    cata,
+
+    -- * Symbolic operators
+    (⇸),
+    (⊙),
+    (⊲),
+    (↬),
+    (⥀),
+    (↯),
+    (⥁),
+    (○),
+    (↑),
+    (↓),
 
     -- * Trace typeclass
     Trace (..),
@@ -32,21 +56,42 @@ module Circuit
     newPromptTag,
     prompt,
     control0,
+    whileK,
   )
 where
 
 import Circuit.Circuit
   ( Circuit (..),
     reify,
+    lower,
+    push,
     toHyper,
     hyperfy,
+    (⊙),
+    (⊲),
+    (↬),
+    (↑),
+    (↓),
+    (⥀),
+    (↯),
   )
 import Circuit.Hyper
   ( Hyper (..),
+    type (↬),
     run,
     base,
     lift,
-    push,
+    hyperAp,
+    hyperBind,
+    valueFix,
+    hyperFix,
+    unroll,
+    roll,
+    ana,
+    cata,
+    (⇸),
+    (⥁),
+    (○),
   )
 import Circuit.Traced
   ( Trace (..),
@@ -54,4 +99,5 @@ import Circuit.Traced
     newPromptTag,
     prompt,
     control0,
+    whileK,
   )

@@ -53,3 +53,4 @@ library
 
   build-depends:
     base >=4.18 && <5,
+    profunctors >=5.0 && <6,
