@@ -310,11 +310,12 @@ instance MachineEval ('Comp p q) where
   evalToMachine (EC pos f) = (pos, f)
   evalFromMachine = EC
 
--- | Monomial evaluation.  The position is the current-state observation,
--- so 'machineObs' can derive it from the eval producer without stepping.
-instance {-# OVERLAPPING #-} MachineEval (Mono i o) where
-  evalToMachine (EP (EK o, EE f)) = ((o, ()), f . monoDir)
-  evalFromMachine (o, ()) k = EP (EK o, EE (k . monoIn))
+-- Monomial evaluation needs no special instance: 'Mono' is @'Prod'
+-- ('Const o) ('Exp i)@, and the generic 'Prod' instance computes exactly
+-- the override this site used to carry — @evalToMachine (EP (EK o, EE f))@
+-- is @((o, ()), either absurd f)@ against the old @((o, ()) f . monoDir)@,
+-- the same function since @monoDir = either absurd id@; @evalFromMachine@
+-- is syntactically identical since @monoIn = Right@.
 
 offFibre :: a
 offFibre = error "off-fibre direction"
