@@ -104,7 +104,7 @@ import Circuit.Bimonoid qualified as Bm
 import Circuit.Body (Body (..))
 import Circuit.Category (Category (..))
 import Circuit.Equip (Boundary (..), Poles (..), UnitCell (..))
-import Circuit.Machine (Machine, MachineObs, machine, machineObsWith, monoDir, moore, toEvalMachine)
+import Circuit.Machine (Machine, MachineObs, machine, machineObsWith, monoDir, mooreMono, toEvalMachine)
 import Circuit.Poly (Eval (..), Lens, Mono, applyLens, lens)
 import Circuit.Shared (Pick (..), Schedule (..), Shared (..), chooseS)
 import Circuit.Stream (Cons (..), Uncons (..))
@@ -186,7 +186,7 @@ machineAsMoore sys s0 = asMoore (asProcess sys s0)
 -- 'processAsMachine', whose position leg reads the /stepped/ state), so the
 -- Moore agreement holds by construction.
 processObs :: Process s a b -> MachineObs s (Mono a b)
-processObs pp = moore (\s -> (processExtract pp s, ())) (\s d -> processStep pp s (monoDir d))
+processObs pp = mooreMono (processExtract pp) (processStep pp)
 
 -- | Point a monomial machine with a 'Circuit.Equip.UnitCell' instead of a
 -- bare seed.

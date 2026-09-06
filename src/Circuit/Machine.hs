@@ -74,6 +74,7 @@ module Circuit.Machine
     machineObs,
     machineObsWith,
     moore,
+    mooreMono,
     toEvalMachine,
 
     -- * Monomial helpers
@@ -132,7 +133,7 @@ import Prelude hiding (id, (.))
 -- >>> import Circuit.Equip (Poles (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Morphism, Poly (..), Pos, lens, applyLens)
 -- >>> import Circuit.Container (SomePos (..), posOf)
--- >>> import Circuit.Machine (Machine, MachineObs, machine, machineMorphism, machineObs, machineObsWith, machineToPolesAt, branchMachine, MachineEval (..), toEvalMachine, fromEvalMachine, monoDir, monoIn, parWiringMachine)
+-- >>> import Circuit.Machine (Machine, MachineObs, machine, machineMorphism, machineObs, machineObsWith, machineToPolesAt, branchMachine, MachineEval (..), toEvalMachine, moore, monoDir, monoIn, parWiringMachine)
 -- >>> import Circuit.Process (bodyToMoore, scan)
 -- >>> import Data.Void (absurd)
 
@@ -247,8 +248,25 @@ machineObs f = moore (fst . evalToMachine . f) (\s -> snd (evalToMachine (f s)))
 -- @snd (machineMorphism (moMachine (moore obs step)) (s, d))@ reduces to
 -- @obs s@ by computation.  The Moore condition holds by construction, not
 -- by an argument about what some eliminator never consults.
+--
+-- >>> let counter = moore (\n -> (n, ())) (\n d -> n + monoDir d) :: MachineObs Int (Mono Int Int)
+-- >>> moObserve counter 5
+-- (5,())
 moore :: (s -> Pos p) -> (s -> Dir p -> s) -> MachineObs s p
 moore obs step = MachineObs obs (machine (\(s, d) -> (step s d, obs s)))
+
+-- | 'moore' for a monomial interface, absorbing the two taxes the
+-- 'Mono' presentation charges against the two-leg form: the position
+-- is @(o, ())@ ('Pos' of @'Prod' ('Const' o) ('Exp' i)@ nests a unit
+-- the caller doesn't want to think about) and the direction is
+-- @'Either' 'Void' i@ ('Dir' of the same product).  Both are erased
+-- here, leaving plain @s -> o@ and @s -> i -> s@ legs.
+--
+-- >>> let counter = mooreMono id (+) :: MachineObs Int (Mono Int Int)
+-- >>> moObserve counter 5
+-- (5,())
+mooreMono :: (s -> o) -> (s -> i -> s) -> MachineObs s (Mono i o)
+mooreMono obs step = moore (\s -> (obs s, ())) (\s d -> step s (monoDir d))
 
 -- | Certify an arrow-form machine with a caller-supplied observation.
 --
@@ -374,8 +392,8 @@ machineToPoles sys =
 -- The write leg on a branched machine: the carrier records the branch and
 -- payload of the position the step landed in:
 --
--- >>> let inc = machineObs (\s -> EP (EK s, EE (\i -> s + i))) :: MachineObs Int (Mono Int Int)
--- >>> let dbl = machineObs (\s -> EP (EK (s * 2), EE (\i -> s + i))) :: MachineObs Int (Mono Int Int)
+-- >>> let inc = mooreMono id (+) :: MachineObs Int (Mono Int Int)
+-- >>> let dbl = mooreMono (* 2) (+) :: MachineObs Int (Mono Int Int)
 -- >>> let br = moMachine (branchMachine odd inc dbl) :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
 -- >>> let p = machineToPolesAt br
 -- >>> map (\(SomePos i) -> posOf i) (scan (bodyToMoore (conjoint p) 1) [Left (Right 1), Right (Right 1), Left (Right 1)])
