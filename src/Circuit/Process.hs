@@ -81,8 +81,10 @@ module Circuit.Process
     foldProcess,
     encodeList,
 
-    -- * Channel-pole runners
+    -- * Channel-shaped constructor
     mealy,
+
+    -- * Channel-pole runners
     runMoore,
 
     -- * Cross-tick feedback
@@ -664,7 +666,7 @@ encodeList (Moore inject step extract) = yank (Lift b)
              in Left (Just ch', rest, extract ch' : bs)
 {-# INLINE encodeList #-}
 
--- * Channel-pole runners
+-- * Channel-shaped constructor
 
 -- | Build a 'Moore' from a Mealy-style step.
 --
@@ -683,6 +685,8 @@ mealy ch0 step = Moore inject step' extract
        in (ch', mb')
     extract = snd
 {-# INLINEABLE mealy #-}
+
+-- * Channel-pole runners
 
 -- | Collect the emitted outputs of a 'Moore (Maybe b)' over a list.
 runMoore :: Moore a (Maybe b) -> [a] -> [b]
@@ -776,7 +780,7 @@ mooreToSomeBody (Moore inject step extract) k =
 -- | View a cartesian body as a 'Moore'.
 --
 -- The body state @s@ becomes the process state, paired with the most recent
--- output so that the Machine-style @extract@ can be defined.
+-- output so that the 'Moore' @extract@ is simply @snd@.
 --
 -- Running the result with 'scan' is the canonical body runner:
 --

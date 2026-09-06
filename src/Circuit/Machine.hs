@@ -353,7 +353,7 @@ instance MachineEval ('Comp p q) where
 -- Monomial evaluation needs no special instance: 'Mono' is @'Prod'
 -- ('Const o) ('Exp i)@, and the generic 'Prod' instance computes exactly
 -- the override this site used to carry — @evalToMachine (EP (EK o, EE f))@
--- is @((o, ()), either absurd f)@ against the old @((o, ()) f . monoDir)@,
+-- is @((o, ()), either absurd f)@ against the old @((o, ()), f . monoDir)@,
 -- the same function since @monoDir = either absurd id@; @evalFromMachine@
 -- is syntactically identical since @monoIn = Right@.
 
@@ -397,11 +397,12 @@ machineToPoles sys =
 -- | Convert a 'Machine' into companion/conjoint poles over the /position
 -- carrier/ 'SomePos' p — the honest grade of the polynomial pole.
 --
--- The flat grade ('machineToPoles') took the observation as a separate
--- argument because its carrier carried no position: the read leg consulted
--- a supplied function.  The 'SomePos' carrier /is/ a position, so no
--- observation argument is needed — the signature shrinks, which is the
--- stamp of the honest grade.
+-- The flat grade ('machineToPoles') takes the observable bundle: its read
+-- leg is the machine's own 'moObserve'.  This grade takes a bare 'Machine'
+-- whose carrier carries no position, so the carrier is upgraded to
+-- 'SomePos' p — a value that /is/ a position, letting the read leg recover
+-- it with 'posOf' alone.  No observation argument is needed — the signature
+-- drops it, which is the stamp of the honest grade.
 -- The write leg steps and posts 'posAt' of the new position; the read leg
 -- recovers the position from the carrier it is handed, without stepping.
 --
