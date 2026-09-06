@@ -122,6 +122,8 @@ import Prelude hiding (id, (.))
 -- >>> import Prelude hiding (id, (.))
 -- >>> import Circuit.Category (id, (.))
 -- >>> import Circuit.Tensor (Unital (..))
+-- >>> import Circuit.Traced (Yank (..), Strength (..))
+-- >>> import Data.Tuple qualified as Tuple
 
 -- | A stateful process from @a@ to @b@.
 --
@@ -362,7 +364,7 @@ after (Moore i st ex) f = Moore i st (f . ex)
 -- >>> scan (id . delay 0) [1, 2, 3] == scan (delay 0) [1, 2, 3]
 -- True
 -- >>> scan (delay 0) [1, 2, 3]
--- [0,2,3]
+-- [0,1,2]
 instance Category Moore where
   id :: Moore a a
   id = Moore id (\_ x -> x) id
@@ -738,7 +740,7 @@ runMoore = runMooreStream
 -- thereafter. This is the primitive that makes 'register' productive: the
 -- feedback wire is observable one tick late.
 delay :: s -> Moore s s
-delay s0 = Moore (const s0) (const id) id
+delay s0 = Moore (\a -> (s0, a)) (\(_, prev) a -> (prev, a)) fst
 
 -- | Cross-tick register feedback.
 --
@@ -755,7 +757,12 @@ delay s0 = Moore (const s0) (const id) id
 -- For bodies whose fixed-point is independent of the initial feedback value
 -- (e.g. affine/stateless feedback such as @ewmaBody@), the same wiring can
 -- be expressed by swapping the feedback wire into the active position,
--- applying 'strength' ('delay' s0), and tracing.
+-- applying 'strength' ('delay' s0), and tracing. The two scan identically:
+--
+-- >>> let body = Moore (\(x, _) -> x) (\s (x, sPrev) -> x + sPrev) (\s -> (s, s)) :: Moore (Int, Int) (Int, Int)
+-- >>> let swapP (Moore i st ex) = Moore (i . Tuple.swap) (\s -> st s . Tuple.swap) (Tuple.swap . ex)
+-- >>> scan (register 0 body) [1, 2, 3] == scan (yank (swapP (body . strength (delay 0)))) [1, 2, 3]
+-- True
 register :: s -> Moore (a, s) (b, s) -> Moore a b
 register s0 (Moore i st ex) = Moore i' st' ex'
   where
