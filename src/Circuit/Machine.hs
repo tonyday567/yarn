@@ -75,6 +75,7 @@ module Circuit.Machine
     machineObsWith,
     moore,
     mooreMono,
+    moStep,
     toEvalMachine,
 
     -- * Monomial helpers
@@ -209,6 +210,14 @@ monoIn :: i -> Dir (Mono i o)
 monoIn = Right
 
 -- | Convert an eval-form @(->)@ machine into the arrow form.
+--
+-- This is the lossy direction: the eval form may observe and step at
+-- different states, while the arrow form presents a single position per
+-- state.  It is definitionally @'moMachine' . 'machineObs'@ — the
+-- observation 'machineObs' derives becomes the position leg, and the
+-- agreement equation is the caller's obligation (see 'machineObsWith').
+-- Where the observation is available directly, 'moore' / 'mooreMono'
+-- state the two legs separately instead.
 fromEvalMachine :: (MachineEval p) => (s -> Eval p s) -> Machine (,) s (->) p
 fromEvalMachine f = machine $ \(s, d) ->
   let (pos, next) = evalToMachine (f s)
@@ -289,7 +298,13 @@ machineObsWith = MachineObs
 -- caller's direction.  Total — no direction is probed, so the Moore
 -- condition is never silently assumed.
 toEvalMachine :: (MachineEval p) => MachineObs s p -> s -> Eval p s
-toEvalMachine sys s = evalFromMachine (moObserve sys s) (\d -> fst (machineMorphism (moMachine sys) (s, d)))
+toEvalMachine sys s = evalFromMachine (moObserve sys s) (moStep sys s)
+
+-- | Step an observable machine at a direction, keeping only the next
+-- state.  The position half of the body's span is discarded; where it
+-- is wanted too, run the body via 'machineMorphism' on 'moMachine'.
+moStep :: MachineObs s p -> s -> Dir p -> s
+moStep sys s d = fst (machineMorphism (moMachine sys) (s, d))
 
 -- | Helpers for translating between the 'Eval' presentation and the arrow
 -- presentation of a @(->)@ machine.  These extend the netlist view to 'Sum'.
@@ -345,17 +360,18 @@ instance MachineEval ('Comp p q) where
 offFibre :: a
 offFibre = error "off-fibre direction"
 
--- | Place two machines side by side: interface @p ⊗ q@, state @(s, t)@.
+-- | Place two observable machines side by side: interface @p ⊗ q@, state
+-- @(s, t)@.
 --
 -- This is the entry point for acyclic wiring over the Dirichlet tensor —
 -- boxes in parallel, pins assigned jointly.  The wired interface can be
--- mapped with 'parT' (wire-then-map).
-parWiringMachine :: Machine (,) s (->) p -> Machine (,) t (->) q -> Machine (,) (s, t) (->) (PTensor p q)
-parWiringMachine sp sq =
-  machine $ \((s, t), (dp, dq)) ->
-    let (s', posP) = machineMorphism sp (s, dp)
-        (t', posQ) = machineMorphism sq (t, dq)
-     in ((s', t'), (posP, posQ))
+-- mapped with 'parT' (wire-then-map).  The observation of the pair is the
+-- pair of observations; each step is the pair of steps.
+parWiringMachine :: MachineObs s p -> MachineObs t q -> MachineObs (s, t) (PTensor p q)
+parWiringMachine sysp sysq =
+  moore
+    (\(s, t) -> (moObserve sysp s, moObserve sysq t))
+    (\(s, t) (dp, dq) -> (moStep sysp s dp, moStep sysq t dq))
 
 -- * Channel-pole view of machines
 

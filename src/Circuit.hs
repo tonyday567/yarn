@@ -98,9 +98,11 @@
 -- Two machines run side by side over the tensor of their interfaces,
 -- state tensored:
 --
--- >>> let both = parWiringMachine (moMachine counter) (moMachine counter) :: Machine (,) (Int, Int) (->) (PTensor (Mono Int Int) (Mono Int Int))
--- >>> machineMorphism both ((0, 10), (monoIn 1, monoIn 1))
--- ((1,11),((0,()),(10,())))
+-- >>> let both = parWiringMachine counter counter :: MachineObs (Int, Int) (PTensor (Mono Int Int) (Mono Int Int))
+-- >>> moStep both (0, 10) (monoIn 1, monoIn 1)
+-- (1,11)
+-- >>> moObserve both (0, 10)
+-- ((0,()),(10,()))
 --
 -- Finally the machine closes into a feedback loop: `machineToClosed`
 -- folds the carrier into the feedback wire of a `Trace`, and the seed is
