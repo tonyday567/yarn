@@ -274,6 +274,13 @@ markProcess isHalt (Process s0 step extract) =
     )
 
 -- | Mark-driven halt combinator for processes.
+--
+-- A leading non-halt mark carries no payload to seed the hidden channel
+-- from.  Rather than erroring, the machine enters a not-yet-started state
+-- whose extract is 'Nothing'; the next 'Payload' starts it through the
+-- underlying 'inject'.  (The pointed 'markProcess' differs: its seed is
+-- live from the first input, so a leading non-halt mark is a no-op with
+-- output 'Just' of the seed.)
 markMoore ::
   (k -> Bool) ->
   Moore a b ->
@@ -281,17 +288,21 @@ markMoore ::
 markMoore isHalt (Moore inject step extract) =
   Moore
     ( \case
-        Payload a -> Left (inject a)
-        Mark k -> if isHalt k then Right () else Left (inject (error "markMoore: initial mark without payload"))
+        Payload a -> Left (Just (inject a))
+        Mark k -> if isHalt k then Right () else Left Nothing
     )
     ( \case
-        Left s -> \case
-          Payload a -> Left (step s a)
-          Mark k -> if isHalt k then Right () else Left s
+        Left (Just s) -> \case
+          Payload a -> Left (Just (step s a))
+          Mark k -> if isHalt k then Right () else Left (Just s)
+        Left Nothing -> \case
+          Payload a -> Left (Just (inject a))
+          Mark k -> if isHalt k then Right () else Left Nothing
         Right () -> const (Right ())
     )
     ( \case
-        Left s -> Just (extract s)
+        Left (Just s) -> Just (extract s)
+        Left Nothing -> Nothing
         Right () -> Nothing
     )
 

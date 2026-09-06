@@ -35,10 +35,9 @@ import Circuit.Machine (Machine, MachineObs (..), branchMachine, machine, machin
 import Circuit.Poly (Dir, Mono, Poly (..))
 import Circuit.Process (Moore (..), Process (..), asMoore, fold, markMoore, markProcess, scan, scanProcess)
 import Circuit.Tensor (Bias (..))
-import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (void, when)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (isNothing)
 import Data.Void (absurd)
 import Prelude hiding (curry, id, uncurry, (.))
 
@@ -204,19 +203,18 @@ polesTopic verbosity = do
             sys = markProcess (== "HALT") innerP
             p = asMoore sys
          in null (scan p []) && fold p [Payload 1, Payload 2, Mark "HALT"] == Just Nothing,
-      -- The documented asymmetry (Process.hs:251): the unpointed
-      -- 'markMoore' has no seed, so an initial mark without payload reaches
-      -- 'error "markMoore: initial mark without payload"' — a runtime
-      -- error, not a silent default. 'markProcess' exists precisely to
-      -- remove that: its seed is already live, so a non-halt mark is a no-op
-      -- from the very first input. Mutation room: delete the error branch in
-      -- 'markMoore' (mapping the initial mark to a made-up state) and the
-      -- first oracle silently passes while the asymmetry is gone.
-      checkIOV verbosity "markMoore errors on an initial mark without payload" $ do
+      -- The documented asymmetry (Process.hs): the unpointed 'markMoore'
+      -- has no seed, so an initial mark without payload has no state to
+      -- inhabit.  The behaviour is total: the machine parks in a
+      -- not-yet-started state whose extract is 'Nothing', and the next
+      -- 'Payload' starts it via 'inject'.  'markProcess' exists precisely
+      -- to remove that gap: its seed is already live, so a non-halt mark
+      -- is a no-op from the very first input, with output 'Just' of the
+      -- seed.
+      checkV verbosity "markMoore is total on an initial mark without payload" $
         let inner = Moore id (+) id :: Moore Int Int
             p = markMoore (== "HALT") inner
-        result <- try (evaluate (fromMaybe 0 (head (scan p [Mark "NOOP"])))) :: IO (Either SomeException Int)
-        pure (case result of Left _ -> True; Right _ -> False),
+         in scan p [Mark "NOOP", Payload 1] == [Nothing, Just 1],
       checkV verbosity "markProcess seeds past the initial-mark asymmetry" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
