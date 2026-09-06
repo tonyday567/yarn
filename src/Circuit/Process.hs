@@ -116,7 +116,6 @@ import Data.These (These (..))
 import Prelude hiding (id, (.))
 
 -- $setup
--- >>> import Circuit.Process
 -- >>> import Prelude hiding (id, (.))
 -- >>> import Circuit.Category (id, (.))
 -- >>> import Circuit.Tensor (Unital (..))

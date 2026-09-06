@@ -134,7 +134,6 @@ import Prelude hiding (id, (.))
 -- >>> import Circuit.Equip (Poles (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Morphism, Poly (..), Pos, lens, applyLens)
 -- >>> import Circuit.Container (SomePos (..), posOf)
--- >>> import Circuit.Machine (Machine, MachineObs, machine, machineMorphism, machineObs, machineObsWith, machineToPolesAt, branchMachine, MachineEval (..), toEvalMachine, moore, monoDir, monoIn, parWiringMachine)
 -- >>> import Circuit.Process (bodyToMoore, scan)
 -- >>> import Data.Void (absurd)
 
@@ -211,13 +210,12 @@ monoIn = Right
 
 -- | Convert an eval-form @(->)@ machine into the arrow form.
 --
--- This is the lossy direction: the eval form may observe and step at
--- different states, while the arrow form presents a single position per
--- state.  It is definitionally @'moMachine' . 'machineObs'@ — the
--- observation 'machineObs' derives becomes the position leg, and the
--- agreement equation is the caller's obligation (see 'machineObsWith').
--- Where the observation is available directly, 'moore' / 'mooreMono'
--- state the two legs separately instead.
+-- The lossy direction: 'machineObs' derives an observation alongside
+-- this body, and 'fromEvalMachine' keeps only the body — the
+-- observation is discarded, and downstream re-derives it, which is
+-- exactly what the certifier sweep was doing.  It is definitionally
+-- @'moMachine' . 'machineObs'@.  Prefer 'machineObs', or state the
+-- legs directly with 'moore' / 'mooreMono'.
 fromEvalMachine :: (MachineEval p) => (s -> Eval p s) -> Machine (,) s (->) p
 fromEvalMachine f = machine $ \(s, d) ->
   let (pos, next) = evalToMachine (f s)
