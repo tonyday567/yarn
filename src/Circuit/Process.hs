@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -81,12 +80,10 @@ module Circuit.Process
     fold,
     foldProcess,
     encodeList,
-    encodeStream,
 
     -- * Channel-pole runners
     mealy,
     runMoore,
-    runMooreStream,
 
     -- * Cross-tick feedback
     delay,
@@ -107,7 +104,6 @@ import Circuit.Equip (Boundary (..), Poles (..), UnitCell (..))
 import Circuit.Machine (Machine, MachineObs, machine, machineObsWith, monoDir, mooreMono, toEvalMachine)
 import Circuit.Poly (Eval (..), Lens, Mono, applyLens, lens)
 import Circuit.Shared (Pick (..), Schedule (..), Shared (..), chooseS)
-import Circuit.Stream (Cons (..), Uncons (..))
 import Circuit.Syntax (Syntax (Lift))
 import Circuit.Tensor (Action (..), Bias (..), Tensor (..), Unital (..))
 import Circuit.Trace (Trace)
@@ -639,48 +635,33 @@ foldProcess pp = go (processSeed pp)
     go s (a : as) = go (processStep pp s a) as
 {-# INLINEABLE foldProcess #-}
 
--- | Encode a process as a stream-level 'Trace' over arbitrary 'Uncons'/'Cons'
--- streams.
+-- | Encode a process as a list-level 'Trace' 'Either' @(->)@.
 --
 -- This is the definitional runner: 'scan' is 'Circuit.Syntax.eval'
--- composed with 'encodeStream' (generalised to any 'Uncons' input and
--- 'Cons' output). The feedback channel carries
+-- composed with 'encodeList'. The feedback channel carries
 -- @(Maybe channel, remaining input, accumulated output)@.
-encodeStream :: forall f a g b. (Uncons f a, Cons g b) => Moore a b -> Trace Either (->) f g
-encodeStream (Moore inject step extract) = yank (Lift b)
+encodeList :: Moore a b -> Trace Either (->) [a] [b]
+encodeList (Moore inject step extract) = yank (Lift b)
   where
     Body b =
       Body $ \case
-        Right f -> case uncons f of
-          That _ -> Right nilG
-          This a ->
+        Right xs -> case xs of
+          [] -> Right []
+          [a] ->
             let ch0 = inject a
-             in Left (Just ch0, nilF, [extract ch0])
-          These a rest ->
+             in Left (Just ch0, [], [extract ch0])
+          (a : rest) ->
             let ch0 = inject a
              in Left (Just ch0, rest, [extract ch0])
-        Left (Nothing, _, _) -> error "encodeStream: feedback reached before first input"
-        Left (Just ch, f, bs) -> case uncons f of
-          That _ -> Right (foldl (flip consG) nilG bs)
-          This a ->
+        Left (Nothing, _, _) -> error "encodeList: feedback reached before first input"
+        Left (Just ch, xs, bs) -> case xs of
+          [] -> Right (reverse bs)
+          [a] ->
             let ch' = step ch a
-             in Left (Just ch', nilF, extract ch' : bs)
-          These a rest ->
+             in Left (Just ch', [], extract ch' : bs)
+          (a : rest) ->
             let ch' = step ch a
              in Left (Just ch', rest, extract ch' : bs)
-
-    nilF :: f
-    nilF = nil @f @a
-
-    nilG :: g
-    nilG = consNil @g @b
-
-    consG :: b -> g -> g
-    consG = cons
-
--- | List specialization of 'encodeStream'.
-encodeList :: Moore a b -> Trace Either (->) [a] [b]
-encodeList = encodeStream
 {-# INLINE encodeList #-}
 
 -- * Channel-pole runners
@@ -703,33 +684,21 @@ mealy ch0 step = Moore inject step' extract
     extract = snd
 {-# INLINEABLE mealy #-}
 
--- | Collect the emitted outputs of a 'Moore (Maybe b)' over any stream.
-runMooreStream :: forall f a g b. (Uncons f a, Cons g b) => Moore a (Maybe b) -> f -> g
-runMooreStream (Moore inject step extract) = goInit
+-- | Collect the emitted outputs of a 'Moore (Maybe b)' over a list.
+runMoore :: Moore a (Maybe b) -> [a] -> [b]
+runMoore (Moore inject step extract) = goInit
   where
-    nilG :: g
-    nilG = consNil @g @b
-
-    consG :: b -> g -> g
-    consG = cons
-
     emit ch rest = case extract ch of
       Nothing -> rest
-      Just b -> consG b rest
+      Just b -> b : rest
 
-    goInit f = case uncons f of
-      That _ -> nilG
-      This a -> let ch0 = inject a in emit ch0 nilG
-      These a rest -> let ch0 = inject a in emit ch0 (go ch0 rest)
+    goInit [] = []
+    goInit [a] = let ch0 = inject a in emit ch0 []
+    goInit (a : rest) = let ch0 = inject a in emit ch0 (go ch0 rest)
 
-    go ch f = case uncons f of
-      That _ -> nilG
-      This a -> let ch' = step ch a in emit ch' nilG
-      These a rest -> let ch' = step ch a in emit ch' (go ch' rest)
-
--- | List specialization of 'runMooreStream'.
-runMoore :: Moore a (Maybe b) -> [a] -> [b]
-runMoore = runMooreStream
+    go _ [] = []
+    go ch [a] = let ch' = step ch a in emit ch' []
+    go ch (a : rest) = let ch' = step ch a in emit ch' (go ch' rest)
 {-# INLINEABLE runMoore #-}
 
 -- * Cross-tick feedback
