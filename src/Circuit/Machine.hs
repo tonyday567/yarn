@@ -256,6 +256,13 @@ moore obs step = MachineObs obs (machine (\(s, d) -> (step s d, obs s)))
 -- observation must agree with the position the body presents at every
 -- reachable state.  Where the observation can be derived instead, prefer
 -- 'machineObs'.
+--
+-- The ways to a 'MachineObs', best first: two-leg form @moore obs
+-- step@ — agreement by computation; eval-form @machineObs f@ — the
+-- observation derived with the body; coalgebra-form
+-- @coalgebraToMachine coal@ — the 'Coalgebra' dynamics with their
+-- readout already attached.  This function is the escape hatch for a
+-- pre-fused body; the agreement equation is the caller's obligation.
 machineObsWith :: (s -> Pos p) -> Machine (,) s (->) p -> MachineObs s p
 machineObsWith = MachineObs
 
