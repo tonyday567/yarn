@@ -13,9 +13,11 @@
 -- * The fiber/interface is the polynomial @p@, with positions 'Pos' p and
 --   directions 'Dir' p.
 -- * The span shape is @s <- (s, Dir p) -> Pos p@.
--- * "Machine" because the observable output 'Pos' p depends on the state @s@,
---   not directly on the current input direction. The direction is consumed to
---   compute the next state; then the position is read from that state.
+-- * "Machine" because the span pairs a state transition with an output
+--   readout. Nothing at the type level stops the readout from consulting the
+--   direction (Mealy behaviour is a legal inhabitant); Moore-ness — the
+--   position factoring through the state alone — is the property
+--   'MachineObs' witnesses, carrying @obs :: s -> 'Pos' p@ as data.
 --
 -- For a monomial @Mono i o@:
 --
@@ -39,8 +41,8 @@
 -- @d : s ⊗ Dir p -> s@, and output @obs : s -> Pos p@ bundled with the
 -- transition in the 'Circuit.Body.Body'.
 --
--- 'Circuit.Process.Mealy' is the pointed monomial special case: where
--- @Mealy@ is the existential form @∃s. (s, s -> a -> s, s -> b)@, 'Machine'
+-- 'Circuit.Process.Moore' is the pointed monomial special case: where
+-- @Moore@ is the existential form @∃s. (s, s -> a -> s, s -> b)@, 'Machine'
 -- is the polynomial-lens form of the same idea, with @p@ describing the
 -- interactive interface.
 --
@@ -50,11 +52,13 @@
 -- == Conversion ladder
 --
 -- The canonical conversion set: 'machine' in and 'machineMorphism' out;
--- 'Circuit.Process.asProcess' / 'Circuit.Process.machineAsMealy' to
--- processes and 'Circuit.Process.processAsMachine' back;
--- 'machineToPoles' / 'machineToPolesAt' to the equipment;
--- 'coalgebraToMachine' / 'machineToCoalgebraMono' to coalgebras.  The
--- pointed-process side of the ladder lives in "Circuit.Process".
+-- 'moore' / 'machineObs' / 'machineObsWith' build the observable bundle,
+-- 'toEvalMachine' disassembles it; 'Circuit.Process.asProcess' /
+-- 'Circuit.Process.machineAsMoore' to processes and
+-- 'Circuit.Process.processAsMachine' back; 'machineToPoles' /
+-- 'machineToPolesAt' to the equipment; 'coalgebraToMachine' /
+-- 'machineToCoalgebraMono' to coalgebras.  The pointed-process side of the
+-- ladder lives in "Circuit.Process".
 module Circuit.Machine
   ( -- * machines
     Machine (..),
@@ -69,6 +73,7 @@ module Circuit.Machine
     fromEvalMachine,
     machineObs,
     machineObsWith,
+    moore,
     toEvalMachine,
 
     -- * Monomial helpers
@@ -80,7 +85,6 @@ module Circuit.Machine
 
     -- * Channel-pole view of machines
     machineToPoles,
-    machineToPolesWithProbe,
     machineToPolesAt,
 
     -- * Comultiplication / duplication
@@ -129,7 +133,7 @@ import Prelude hiding (id, (.))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Morphism, Poly (..), Pos, lens, applyLens)
 -- >>> import Circuit.Container (SomePos (..), posOf)
 -- >>> import Circuit.Machine (Machine, MachineObs, machine, machineMorphism, machineObs, machineObsWith, machineToPolesAt, branchMachine, MachineEval (..), toEvalMachine, fromEvalMachine, monoDir, monoIn, parWiringMachine)
--- >>> import Circuit.Process (bodyToMealy, scan)
+-- >>> import Circuit.Process (bodyToMoore, scan)
 -- >>> import Data.Void (absurd)
 
 -- | A machine with interface @p@, carrier @s@, over base arrow @arr@,
@@ -234,7 +238,17 @@ data MachineObs s p = MachineObs
 -- built this way satisfy the Moore condition by construction — no probe
 -- direction, no error thunk, no silently assumed law.
 machineObs :: (MachineEval p) => (s -> Eval p s) -> MachineObs s p
-machineObs f = MachineObs (fst . evalToMachine . f) (fromEvalMachine f)
+machineObs f = moore (fst . evalToMachine . f) (\s -> snd (evalToMachine (f s)))
+
+-- | Build an observable machine from its two legs: the observation
+-- @obs :: s -> 'Pos' p@ and the state transition @step :: s -> 'Dir' p -> s@.
+--
+-- Agreement is definitional: the body's position leg is @obs@ itself, so
+-- @snd (machineMorphism (moMachine (moore obs step)) (s, d))@ reduces to
+-- @obs s@ by computation.  The Moore condition holds by construction, not
+-- by an argument about what some eliminator never consults.
+moore :: (s -> Pos p) -> (s -> Dir p -> s) -> MachineObs s p
+moore obs step = MachineObs obs (machine (\(s, d) -> (step s d, obs s)))
 
 -- | Certify an arrow-form machine with a caller-supplied observation.
 --
@@ -326,39 +340,26 @@ machineWriteStateBody sys = Body $ \(s, d) ->
   let (s', _) = machineMorphism sys (s, d)
    in (s', s')
 
--- | Convert a @(->)@ 'Machine' into companion/conjoint channel poles over @Body@.
---
--- The write pole runs the step and posts the new state into the carrier; the
--- read pole fabricates an observation by re-stepping the machine with the
--- supplied probe direction. This works only when the read can be reasonably
--- approximated by a single probe direction; for an honest Machine observation
--- prefer 'machineToPoles'.
-machineToPolesWithProbe :: Dir p -> Machine (,) s (->) p -> Poles s (Body (,) s (->)) (Dir p) (Pos p)
-machineToPolesWithProbe probe sys =
-  Poles
-    (machineWriteStateBody sys)
-    (Body $ \(_, ch) -> machineMorphism sys (ch, probe))
-
--- | Convert a pointed 'Machine' into companion/conjoint channel poles over @Body@.
+-- | Convert an observable 'Machine' into companion/conjoint channel poles
+-- over @Body@.
 --
 -- The state carrier is the machine's state @s@.  The write pole steps with the
 -- supplied direction and posts the new state; the read pole observes the
--- carrier without stepping, using the supplied observation function.
-machineToPoles :: (s -> Pos p) -> Machine (,) s (->) p -> Poles s (Body (,) s (->)) (Dir p) (Pos p)
-machineToPoles ex sys =
+-- carrier without stepping, using the machine's own observation.
+machineToPoles :: MachineObs s p -> Poles s (Body (,) s (->)) (Dir p) (Pos p)
+machineToPoles sys =
   Poles
-    (machineWriteStateBody sys)
-    (Body $ \(s, ch) -> (s, ex ch))
+    (machineWriteStateBody (moMachine sys))
+    (Body $ \(s, ch) -> (s, moObserve sys ch))
 
 -- | Convert a 'Machine' into companion/conjoint poles over the /position
 -- carrier/ 'SomePos' p — the honest grade of the polynomial pole.
 --
--- The flat grade ('machineToPoles', 'machineToPolesWithProbe') needed an
--- observation argument because its carrier carried no position: the read
--- leg either consulted a supplied function or fabricated an observation by
--- re-stepping.  The 'SomePos' carrier /is/ a position, so no observation
--- argument is needed — the signature shrinks, which is the stamp of the
--- honest grade.
+-- The flat grade ('machineToPoles') took the observation as a separate
+-- argument because its carrier carried no position: the read leg consulted
+-- a supplied function.  The 'SomePos' carrier /is/ a position, so no
+-- observation argument is needed — the signature shrinks, which is the
+-- stamp of the honest grade.
 -- The write leg steps and posts 'posAt' of the new position; the read leg
 -- recovers the position from the carrier it is handed, without stepping.
 --
@@ -367,9 +368,9 @@ machineToPoles ex sys =
 --
 -- >>> let inc = machineObs (\s -> EP (EK s, EE (\i -> s + i))) :: MachineObs Int (Mono Int Int)
 -- >>> let dbl = machineObs (\s -> EP (EK (s * 2), EE (\i -> s + i))) :: MachineObs Int (Mono Int Int)
--- >>> let br = branchMachine odd inc dbl :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
+-- >>> let br = moMachine (branchMachine odd inc dbl) :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
 -- >>> let p = machineToPolesAt br
--- >>> map (\(SomePos i) -> posOf i) (scan (bodyToMealy (conjoint p) 1) [Left (Right 1), Right (Right 1), Left (Right 1)])
+-- >>> map (\(SomePos i) -> posOf i) (scan (bodyToMoore (conjoint p) 1) [Left (Right 1), Right (Right 1), Left (Right 1)])
 -- [Left (1,()),Right (4,()),Left (3,())]
 machineToPolesAt ::
   forall p s.
@@ -395,18 +396,20 @@ duplicateMachine sys =
            in EP (EK s1, EE step1)
      in nestedToComp (EP (EK s0, EE nextEval))
 
--- | Build a machine whose interface is the coproduct of two monomial interfaces.
+-- | Build an observable machine whose interface is the coproduct of two
+-- monomial interfaces.
 --
 -- The carrier state selects the active branch at each step.  This is the
 -- level-2 grammar operator on the span fragment: choice lives in the
 -- polynomial interface ('Sum') rather than in the carrier-level 'if'.
+-- The observation follows the branch the state selects.
 branchMachine ::
   (s -> Bool) ->
   MachineObs s (Mono i o) ->
   MachineObs s (Mono i o) ->
-  Machine (,) s (->) ('Sum (Mono i o) (Mono i o))
+  MachineObs s ('Sum (Mono i o) (Mono i o))
 branchMachine cond sysL sysR =
-  fromEvalMachine $ \s ->
+  machineObs $ \s ->
     if cond s
       then ES (Left (toEvalMachine sysL s))
       else ES (Right (toEvalMachine sysR s))
@@ -427,16 +430,16 @@ data SumStep s o1 i1 o2 i2 where
   SumStepL :: o1 -> (i1 -> s) -> SumStep s o1 i1 o2 i2
   SumStepR :: o2 -> (i2 -> s) -> SumStep s o1 i1 o2 i2
 
--- | Build a machine whose interface is the coproduct of two /different/
--- monomial interfaces.  The carrier state selects the active branch at each
--- step.
+-- | Build an observable machine whose interface is the coproduct of two
+-- /different/ monomial interfaces.  The carrier state selects the active
+-- branch at each step.
 branchMachineHet ::
   (s -> Bool) ->
   MachineObs s (Mono i1 o1) ->
   MachineObs s (Mono i2 o2) ->
-  Machine (,) s (->) ('Sum (Mono i1 o1) (Mono i2 o2))
+  MachineObs s ('Sum (Mono i1 o1) (Mono i2 o2))
 branchMachineHet cond sysL sysR =
-  fromEvalMachine $ \s ->
+  machineObs $ \s ->
     if cond s
       then ES (Left (toEvalMachine sysL s))
       else ES (Right (toEvalMachine sysR s))
@@ -461,9 +464,12 @@ data Coalgebra s p q = Coalgebra
     upd :: s -> Eval p s -> Eval q s
   }
 
--- | Run a @Coalgebra s 'Y q@ as a 'Machine' over @q@.
-coalgebraToMachine :: (MachineEval q) => Coalgebra s 'Y q -> Machine (,) s (->) q
-coalgebraToMachine coal = fromEvalMachine $ \s -> upd coal s (EY s)
+-- | Run a @Coalgebra s 'Y q@ as an observable 'Machine' over @q@.
+--
+-- The observation is the coalgebra's own readout: @upd coal s (EY s)@
+-- presents the position paired with its direction consumer.
+coalgebraToMachine :: (MachineEval q) => Coalgebra s 'Y q -> MachineObs s q
+coalgebraToMachine coal = machineObs $ \s -> upd coal s (EY s)
 
 -- | Convert a monomial 'Machine' into a @Coalgebra s 'Y (Mono i o)@.
 machineToCoalgebraMono :: MachineObs s (Mono i o) -> Coalgebra s 'Y (Mono i o)

@@ -15,7 +15,7 @@ import Axioma.Common (Verbosity (..), checkV)
 import Circuit.Body (Body (..), morphism)
 import Circuit.Category (Category (..), (.>))
 import Circuit.Equip (Poles (..), close)
-import Circuit.Machine (Machine, machine, machineMorphism, machineToPoles)
+import Circuit.Machine (Machine, machine, machineMorphism, machineObsWith, machineToPoles)
 import Circuit.Optic
   ( Optic (..),
     composeOptic,
@@ -224,7 +224,7 @@ opticTopic verbosity = do
               Poles
                 (Body (\(s', (s'', d)) -> (fst (machineMorphism inc (s'', d)), fst (machineMorphism inc (s'', d)))))
                 (Body (\(s, ch) -> (s, (ch, ()))))
-            lhs = machineToPoles (\s -> (s * 2, ())) inc
+            lhs = machineToPoles (machineObsWith (\s -> (s * 2, ())) inc)
             rhs = opticPoles optic base
             sample1 = morphism (close lhs) (3, Right 5) :: (Int, (Int, ()))
             sample2 = morphism (close rhs) (3, Right 5) :: (Int, (Int, ()))

@@ -5,15 +5,15 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | Stateful stream processes: the unpointed 'Mealy' carrier and the
+-- | Stateful stream processes: the unpointed 'Moore' carrier and the
 -- pointed 'Process' carrier.
 --
 -- @
--- data Mealy a b = forall s. Mealy (a -> s) (s -> a -> s) (s -> b)
+-- data Moore a b = forall s. Moore (a -> s) (s -> a -> s) (s -> b)
 -- data Process s a b = Process s (s -> a -> s) (s -> b)
 -- @
 --
--- 'Mealy' is the circuits-native carrier for streaming state machines: the
+-- 'Moore' is the circuits-native carrier for streaming state machines: the
 -- interface is a monomial @a -> b@ stream transformer and the initial state is
 -- supplied by the first input. The underlying span-shaped carrier is
 -- 'Circuit.Body.Body'.
@@ -24,12 +24,12 @@
 --
 -- 'Process' is the same machine with the seed made explicit: the state type
 -- @s@ is a parameter and every tick is uniform (state in, input in, state
--- out, output out). 'asMealy' forgets the seed, mapping a pointed process
--- to its unpointed shadow; 'asProcess' and 'machineAsMealy' (both exported
+-- out, output out). 'asMoore' forgets the seed, mapping a pointed process
+-- to its unpointed shadow; 'asProcess' and 'machineAsMoore' (both exported
 -- from this module) mediate the monomial corner with polynomial machines.
 --
 -- This pair is intended to replace the hand-rolled state-machine arrow: stats
--- packages become boxes @Mealy a b@ / @Process s a b@, while the arrow itself
+-- packages become boxes @Moore a b@ / @Process s a b@, while the arrow itself
 -- lives in the substrate next to 'Circuit.Trace' and 'Circuit.Net'.
 --
 -- The semantics are intentionally tied to the circuits substrate:
@@ -46,15 +46,16 @@
 -- which builds polynomial interfaces on top of this monomial carrier.
 module Circuit.Process
   ( -- * Stream transformer (monomial special case)
-    Mealy (..),
+    Moore (..),
 
     -- * Pointed process (explicit seed)
     Process (..),
-    asMealy,
+    asMoore,
 
     -- * Machine conversions
     asProcess,
-    machineAsMealy,
+    processObs,
+    machineAsMoore,
     asProcessCell,
     processAsMachine,
 
@@ -64,7 +65,7 @@ module Circuit.Process
 
     -- * Boundary machines
     markProcess,
-    markMealy,
+    markMoore,
     scheduleAsProcess,
 
     -- * Channel-pole processes
@@ -82,10 +83,10 @@ module Circuit.Process
     encodeList,
     encodeStream,
 
-    -- * Mealy-style processes
+    -- * Channel-pole runners
     mealy,
-    runMealy,
-    runMealyStream,
+    runMoore,
+    runMooreStream,
 
     -- * Cross-tick feedback
     delay,
@@ -93,8 +94,8 @@ module Circuit.Process
 
     -- * Body conversions
     processToBody,
-    mealyToSomeBody,
-    bodyToMealy,
+    mooreToSomeBody,
+    bodyToMoore,
   )
 where
 
@@ -103,7 +104,7 @@ import Circuit.Bimonoid qualified as Bm
 import Circuit.Body (Body (..))
 import Circuit.Category (Category (..))
 import Circuit.Equip (Boundary (..), Poles (..), UnitCell (..))
-import Circuit.Machine (Machine, MachineObs, machine, machineObsWith, monoDir, toEvalMachine)
+import Circuit.Machine (Machine, MachineObs, machine, machineObsWith, monoDir, moore, toEvalMachine)
 import Circuit.Poly (Eval (..), Lens, Mono, applyLens, lens)
 import Circuit.Shared (Pick (..), Schedule (..), Shared (..), chooseS)
 import Circuit.Stream (Cons (..), Uncons (..))
@@ -132,17 +133,17 @@ import Prelude hiding (id, (.))
 -- This is the input discharge of pointing: the initial state is created from
 -- the first input. See 'Circuit.Equip.UnitCell' for the explicit discharge
 -- and the taxonomy.
-data Mealy a b where
-  Mealy ::
+data Moore a b where
+  Moore ::
     forall s a b.
     (a -> s) ->
     (s -> a -> s) ->
     (s -> b) ->
-    Mealy a b
+    Moore a b
 
 -- | A pointed process with an explicit seed.
 --
--- This is the same data as 'Mealy' except the initial state @s0@ is exposed
+-- This is the same data as 'Moore' except the initial state @s0@ is exposed
 -- rather than computed from the first input. Every tick is uniform: state in,
 -- input in, state out, output out.
 --
@@ -154,12 +155,12 @@ data Process s a b = Process
     processExtract :: s -> b
   }
 
--- | Forget the explicit seed of a 'Process', yielding a 'Mealy' whose
+-- | Forget the explicit seed of a 'Process', yielding a 'Moore' whose
 -- first input creates the initial state via 'processStep'.
-asMealy :: Process s a b -> Mealy a b
-asMealy (Process s0 step extract) =
-  Mealy (\a -> step s0 a) step extract
-{-# INLINEABLE asMealy #-}
+asMoore :: Process s a b -> Moore a b
+asMoore (Process s0 step extract) =
+  Moore (\a -> step s0 a) step extract
+{-# INLINEABLE asMoore #-}
 
 -- * Machine conversions
 
@@ -171,8 +172,19 @@ asProcess sys s0 = Process s0 step' extract'
     extract' s = case toEvalMachine sys s of EP (EK o, EE _) -> o
 
 -- | Convert a monomial @(->)@ machine into a process.
-machineAsMealy :: MachineObs s (Mono i o) -> s -> Mealy i o
-machineAsMealy sys s0 = asMealy (asProcess sys s0)
+machineAsMoore :: MachineObs s (Mono i o) -> s -> Moore i o
+machineAsMoore sys s0 = asMoore (asProcess sys s0)
+
+-- | Certify a pointed process as an observable machine: the observation is
+-- the process's own extract leg.
+--
+-- @'Pos' ('Mono' a b) = (b, ())@, so the observation packages
+-- @processExtract pp@ with the unit the monomial position pairing requires.
+-- The body is rebuilt to present that same observation (rather than reusing
+-- 'processAsMachine', whose position leg reads the /stepped/ state), so the
+-- Moore agreement holds by construction.
+processObs :: Process s a b -> MachineObs s (Mono a b)
+processObs pp = moore (\s -> (processExtract pp s, ())) (\s d -> processStep pp s (monoDir d))
 
 -- | Point a monomial machine with a 'Circuit.Equip.UnitCell' instead of a
 -- bare seed.
@@ -262,15 +274,15 @@ markProcess isHalt (Process s0 step extract) =
     )
 
 -- | Mark-driven halt combinator for processes.
-markMealy ::
+markMoore ::
   (k -> Bool) ->
-  Mealy a b ->
-  Mealy (Boundary k a) (Maybe b)
-markMealy isHalt (Mealy inject step extract) =
-  Mealy
+  Moore a b ->
+  Moore (Boundary k a) (Maybe b)
+markMoore isHalt (Moore inject step extract) =
+  Moore
     ( \case
         Payload a -> Left (inject a)
-        Mark k -> if isHalt k then Right () else Left (inject (error "markMealy: initial mark without payload"))
+        Mark k -> if isHalt k then Right () else Left (inject (error "markMoore: initial mark without payload"))
     )
     ( \case
         Left s -> \case
@@ -310,30 +322,30 @@ polesToProcess p s0 =
 -- * Functorial plumbing
 
 -- | 'fmap' postcomposes a pure function on the output of a process.
-instance Functor (Mealy a) where
-  fmap f (Mealy i st ex) = Mealy i st (f . ex)
+instance Functor (Moore a) where
+  fmap f (Moore i st ex) = Moore i st (f . ex)
   {-# INLINEABLE fmap #-}
 
 -- | 'pure' produces a constant process; '<*>' pairs states and applies the
 -- left output to the right output.
-instance Applicative (Mealy a) where
-  pure b = Mealy (const ()) (\_ _ -> ()) (const b)
+instance Applicative (Moore a) where
+  pure b = Moore (const ()) (\_ _ -> ()) (const b)
   {-# INLINEABLE pure #-}
-  Mealy i1 st1 ex1 <*> Mealy i2 st2 ex2 =
-    Mealy
+  Moore i1 st1 ex1 <*> Moore i2 st2 ex2 =
+    Moore
       (\a -> (i1 a, i2 a))
       (\(s1, s2) a -> (st1 s1 a, st2 s2 a))
       (\(s1, s2) -> ex1 s1 (ex2 s2))
   {-# INLINEABLE (<*>) #-}
 
 -- | Precompose a pure function before a process.
-before :: Mealy b c -> (a -> b) -> Mealy a c
-before (Mealy i st ex) f = Mealy (i . f) (\s a -> st s (f a)) ex
+before :: Moore b c -> (a -> b) -> Moore a c
+before (Moore i st ex) f = Moore (i . f) (\s a -> st s (f a)) ex
 {-# INLINEABLE before #-}
 
 -- | Postcompose a pure function after a process.
-after :: Mealy a b -> (b -> c) -> Mealy a c
-after (Mealy i st ex) f = Mealy i st (f . ex)
+after :: Moore a b -> (b -> c) -> Moore a c
+after (Moore i st ex) f = Moore i st (f . ex)
 {-# INLINEABLE after #-}
 
 -- * Category
@@ -345,20 +357,20 @@ after (Mealy i st ex) f = Mealy i st (f . ex)
 -- Composition is behaviourally transparent: @'id' . 'delay' 0@ scans
 -- exactly like @'delay' 0@ alone.
 --
--- >>> scan (id :: Mealy Int Int) [1, 2, 3]
+-- >>> scan (id :: Moore Int Int) [1, 2, 3]
 -- [1,2,3]
 -- >>> scan (id . delay 0) [1, 2, 3] == scan (delay 0) [1, 2, 3]
 -- True
 -- >>> scan (delay 0) [1, 2, 3]
 -- [0,2,3]
-instance Category Mealy where
-  id :: Mealy a a
-  id = Mealy id (\_ x -> x) id
+instance Category Moore where
+  id :: Moore a a
+  id = Moore id (\_ x -> x) id
   {-# INLINE id #-}
 
-  (.) :: Mealy b c -> Mealy a b -> Mealy a c
-  Mealy i2 st2 ex2 . Mealy i1 st1 ex1 =
-    Mealy
+  (.) :: Moore b c -> Moore a b -> Moore a c
+  Moore i2 st2 ex2 . Moore i1 st1 ex1 =
+    Moore
       (\a -> let s1 = i1 a in (s1, i2 (ex1 s1)))
       ( \(s1, s2) a ->
           let s1' = st1 s1 a
@@ -370,29 +382,29 @@ instance Category Mealy where
 
 -- Assoc / Slide / Strength / Yank for (,)
 --
--- These instances make Mealy a traced monoidal category under the cartesian
+-- These instances make Moore a traced monoidal category under the cartesian
 -- tensor. The yank ties a lazy self-referential knot and is productive only
 -- when the body is non-strict in the feedback channel. Strict accumulators
 -- (e.g. moving averages) diverge under the (,) yank; use Either-trace 'run'
 -- or the 'register' combinator for those.
 
-instance Assoc (,) Mealy where
-  assoc = Mealy id (\_ x -> x) (\(~((a, b), c)) -> (a, (b, c)))
-  assoc' = Mealy id (\_ x -> x) (\(a, ~(b, c)) -> ((a, b), c))
+instance Assoc (,) Moore where
+  assoc = Moore id (\_ x -> x) (\(~((a, b), c)) -> (a, (b, c)))
+  assoc' = Moore id (\_ x -> x) (\(a, ~(b, c)) -> ((a, b), c))
 
-instance Slide (,) Mealy where
-  slide = Mealy id (\_ x -> x) (\(a, ~(b, c)) -> (b, (a, c)))
+instance Slide (,) Moore where
+  slide = Moore id (\_ x -> x) (\(a, ~(b, c)) -> (b, (a, c)))
 
-instance Strength (,) Mealy where
-  strength (Mealy i st ex) =
-    Mealy
+instance Strength (,) Moore where
+  strength (Moore i st ex) =
+    Moore
       (\(~(a, b)) -> (a, i b))
       (\(~(_, s)) (~(a', b)) -> (a', st s b))
       (\(~(a, s)) -> (a, ex s))
 
-instance Yank (,) Mealy where
-  yank (Mealy i st ex) =
-    Mealy
+instance Yank (,) Moore where
+  yank (Moore i st ex) =
+    Moore
       (\b -> let s0 = i (a0, b); a0 = fst (ex s0) in s0)
       ( \s b ->
           let (s', _a) = fix (\ ~(s'', a') -> (st s (a', b), fst (ex s'')))
@@ -404,34 +416,34 @@ instance Yank (,) Mealy where
 
 -- Tensor / Action / Shared for (,)
 --
--- These instances make @Mealy@ a cartesian monoidal category in its own
+-- These instances make @Moore@ a cartesian monoidal category in its own
 -- right, so it can serve as a base category for shared-medium fusion and
--- for @Trace (,) Mealy@.
+-- for @Trace (,) Moore@.
 
 -- | The cartesian unit isomorphisms.  Each introduction echoes the current
 -- input alongside the unit — same @_\\_ x -> x@ step discipline as the
 -- 'Category' identity.
 --
--- >>> scan (unitl' :: Mealy Int ((), Int)) [1, 2, 3]
+-- >>> scan (unitl' :: Moore Int ((), Int)) [1, 2, 3]
 -- [((),1),((),2),((),3)]
--- >>> scan (unitr' :: Mealy Int (Int, ())) [1, 2, 3]
+-- >>> scan (unitr' :: Moore Int (Int, ())) [1, 2, 3]
 -- [(1,()),(2,()),(3,())]
-instance Unital (,) Mealy where
-  unitl = Mealy snd (\_ (_, a) -> a) id
-  unitl' = Mealy id (\_ x -> x) ((),)
-  unitr = Mealy fst (\_ (a, ()) -> a) id
-  unitr' = Mealy id (\_ x -> x) (,())
+instance Unital (,) Moore where
+  unitl = Moore snd (\_ (_, a) -> a) id
+  unitl' = Moore id (\_ x -> x) ((),)
+  unitr = Moore fst (\_ (a, ()) -> a) id
+  unitr' = Moore id (\_ x -> x) (,())
 
-instance Tensor (,) Mealy where
-  tensor (Mealy i1 st1 ex1) (Mealy i2 st2 ex2) =
-    Mealy
+instance Tensor (,) Moore where
+  tensor (Moore i1 st1 ex1) (Moore i2 st2 ex2) =
+    Moore
       (bimap i1 i2)
       (\(s1, s2) (a, c) -> (st1 s1 a, st2 s2 c))
       (bimap ex1 ex2)
   {-# INLINE tensor #-}
 
-instance Action (,) Mealy where
-  braid = Mealy id (const id) sw
+instance Action (,) Moore where
+  braid = Moore id (const id) sw
     where
       sw (a, b) = (b, a)
   {-# INLINE braid #-}
@@ -442,9 +454,9 @@ instance Action (,) Mealy where
 -- chooses which body advances; the gated body's input is discarded and it does
 -- not step. Each process is injected lazily on its first firing, so a body that
 -- is never scheduled consumes no inputs and produces no outputs.
-instance Shared (,) Mealy where
-  sharedBy sched (Mealy iL stL exL) (Mealy iR stR exR) =
-    Mealy inject step extract
+instance Shared (,) Moore where
+  sharedBy sched (Moore iL stL exL) (Moore iR stR exR) =
+    Moore inject step extract
     where
       inject (s, (a, c)) =
         let (s', pick) = chooseS sched s
@@ -509,33 +521,33 @@ instance Shared (,) Mealy where
 
 -- Assoc / Slide / Strength / Yank for Either
 --
--- These instances make Mealy a traced monoidal category under the Either
+-- These instances make Moore a traced monoidal category under the Either
 -- tensor. The yank is per-tick Conway/Elgot settle: Right injects a value,
 -- Left feeds intermediate state back within the same tick until Right exits.
--- This is the instance required by 'Net Either Mealy' knot bodies.
+-- This is the instance required by 'Net Either Moore' knot bodies.
 
-instance Assoc Either Mealy where
-  assoc = Mealy id (\_ x -> x) assocEither
+instance Assoc Either Moore where
+  assoc = Moore id (\_ x -> x) assocEither
     where
       assocEither (Left (Left a)) = Left a
       assocEither (Left (Right b)) = Right (Left b)
       assocEither (Right c) = Right (Right c)
-  assoc' = Mealy id (\_ x -> x) assocEither'
+  assoc' = Moore id (\_ x -> x) assocEither'
     where
       assocEither' (Left a) = Left (Left a)
       assocEither' (Right (Left b)) = Left (Right b)
       assocEither' (Right (Right c)) = Right c
 
-instance Slide Either Mealy where
-  slide = Mealy id (\_ x -> x) slideEither
+instance Slide Either Moore where
+  slide = Moore id (\_ x -> x) slideEither
     where
       slideEither (Left a) = Right (Left a)
       slideEither (Right (Left b)) = Left b
       slideEither (Right (Right c)) = Right (Right c)
 
-instance Strength Either Mealy where
-  strength (Mealy i st ex) =
-    Mealy
+instance Strength Either Moore where
+  strength (Moore i st ex) =
+    Moore
       (\case Left a -> (Nothing, Left a); Right b -> let s0 = i b in (Just s0, Right (ex s0)))
       ( \(ms, _) -> \case
           Left a -> (ms, Left a)
@@ -545,8 +557,8 @@ instance Strength Either Mealy where
       )
       snd
 
-instance Yank Either Mealy where
-  yank (Mealy i st ex) = Mealy i' st' ex'
+instance Yank Either Moore where
+  yank (Moore i st ex) = Moore i' st' ex'
     where
       settle m = case ex m of
         Left s -> settle (st m (Left s))
@@ -560,17 +572,17 @@ instance Yank Either Mealy where
 
 -- * Bimonoid instances (pointwise lift)
 
-instance (Copy (->) a) => Copy Mealy a where
-  copy = Mealy id (\_ x -> x) Bm.copy
+instance (Copy (->) a) => Copy Moore a where
+  copy = Moore id (\_ x -> x) Bm.copy
 
-instance Discard Mealy a where
-  discard = Mealy id (\_ x -> x) (const ())
+instance Discard Moore a where
+  discard = Moore id (\_ x -> x) (const ())
 
-instance (Merge (->) a) => Merge Mealy a where
-  plus = Mealy id (\_ x -> x) Bm.plus
+instance (Merge (->) a) => Merge Moore a where
+  plus = Moore id (\_ x -> x) Bm.plus
 
-instance (Zero (->) a) => Zero Mealy a where
-  zero = Mealy id (\_ x -> x) Bm.zero
+instance (Zero (->) a) => Zero Moore a where
+  zero = Moore id (\_ x -> x) Bm.zero
 
 -- * Runners
 
@@ -578,8 +590,8 @@ instance (Zero (->) a) => Zero Mealy a where
 --
 -- The first element seeds the hidden channel via @inject@; each subsequent
 -- element steps it via @step@; each output is @extract@ of the current channel.
-scan :: Mealy a b -> [a] -> [b]
-scan (Mealy inject step extract) = goInit
+scan :: Moore a b -> [a] -> [b]
+scan (Moore inject step extract) = goInit
   where
     goInit [] = []
     goInit [a] = [extract (inject a)]
@@ -593,7 +605,7 @@ scan (Mealy inject step extract) = goInit
 -- | Run a pointed process over a list, starting from its stored seed.
 --
 -- Output at each step is 'processExtract' of the state /after/ consuming the
--- input, matching the 'Mealy' semantics of 'scan'.
+-- input, matching the 'Moore' semantics of 'scan'.
 scanProcess :: Process s a b -> [a] -> [b]
 scanProcess pp = go (processSeed pp)
   where
@@ -604,8 +616,8 @@ scanProcess pp = go (processSeed pp)
 {-# INLINEABLE scanProcess #-}
 
 -- | Run a process over a list, returning the final output (if any).
-fold :: Mealy a b -> [a] -> Maybe b
-fold (Mealy inject step extract) = goInit
+fold :: Moore a b -> [a] -> Maybe b
+fold (Moore inject step extract) = goInit
   where
     goInit [] = Nothing
     goInit [a] = Just (extract (inject a))
@@ -632,8 +644,8 @@ foldProcess pp = go (processSeed pp)
 -- composed with 'encodeStream' (generalised to any 'Uncons' input and
 -- 'Cons' output). The feedback channel carries
 -- @(Maybe channel, remaining input, accumulated output)@.
-encodeStream :: forall f a g b. (Uncons f a, Cons g b) => Mealy a b -> Trace Either (->) f g
-encodeStream (Mealy inject step extract) = yank (Lift b)
+encodeStream :: forall f a g b. (Uncons f a, Cons g b) => Moore a b -> Trace Either (->) f g
+encodeStream (Moore inject step extract) = yank (Lift b)
   where
     Body b =
       Body $ \case
@@ -665,18 +677,20 @@ encodeStream (Mealy inject step extract) = yank (Lift b)
     consG = cons
 
 -- | List specialization of 'encodeStream'.
-encodeList :: Mealy a b -> Trace Either (->) [a] [b]
+encodeList :: Moore a b -> Trace Either (->) [a] [b]
 encodeList = encodeStream
 {-# INLINE encodeList #-}
 
--- * Mealy-style processes
+-- * Channel-pole runners
 
--- | Build a 'Mealy' from a Mealy-style step.
+-- | Build a 'Moore' from a Mealy-style step.
 --
--- The output may depend on the current input. The channel internally stores the
--- most recent output so that the Machine-style 'Mealy' interface is preserved.
-mealy :: ch -> (ch -> a -> (ch, Maybe b)) -> Mealy a (Maybe b)
-mealy ch0 step = Mealy inject step' extract
+-- The output may depend on the current input — Mealy behaviour, which the
+-- state-indexed 'Moore' interface cannot express directly. The channel
+-- internally stores the most recent output so the 'Moore' triple is
+-- preserved anyway.
+mealy :: ch -> (ch -> a -> (ch, Maybe b)) -> Moore a (Maybe b)
+mealy ch0 step = Moore inject step' extract
   where
     inject a =
       let (ch, mb) = step ch0 a
@@ -687,9 +701,9 @@ mealy ch0 step = Mealy inject step' extract
     extract = snd
 {-# INLINEABLE mealy #-}
 
--- | Collect the emitted outputs of a 'Mealy (Maybe b)' over any stream.
-runMealyStream :: forall f a g b. (Uncons f a, Cons g b) => Mealy a (Maybe b) -> f -> g
-runMealyStream (Mealy inject step extract) = goInit
+-- | Collect the emitted outputs of a 'Moore (Maybe b)' over any stream.
+runMooreStream :: forall f a g b. (Uncons f a, Cons g b) => Moore a (Maybe b) -> f -> g
+runMooreStream (Moore inject step extract) = goInit
   where
     nilG :: g
     nilG = consNil @g @b
@@ -711,10 +725,10 @@ runMealyStream (Mealy inject step extract) = goInit
       This a -> let ch' = step ch a in emit ch' nilG
       These a rest -> let ch' = step ch a in emit ch' (go ch' rest)
 
--- | List specialization of 'runMealyStream'.
-runMealy :: Mealy a (Maybe b) -> [a] -> [b]
-runMealy = runMealyStream
-{-# INLINEABLE runMealy #-}
+-- | List specialization of 'runMooreStream'.
+runMoore :: Moore a (Maybe b) -> [a] -> [b]
+runMoore = runMooreStream
+{-# INLINEABLE runMoore #-}
 
 -- * Cross-tick feedback
 
@@ -723,18 +737,18 @@ runMealy = runMealyStream
 -- Output is @s0@ on the first tick and the input from the previous tick
 -- thereafter. This is the primitive that makes 'register' productive: the
 -- feedback wire is observable one tick late.
-delay :: s -> Mealy s s
-delay s0 = Mealy (const s0) (const id) id
+delay :: s -> Moore s s
+delay s0 = Moore (const s0) (const id) id
 
 -- | Cross-tick register feedback.
 --
--- Given an initial feedback value @s0@ and a process @Mealy (a, s) (b, s)@,
+-- Given an initial feedback value @s0@ and a process @Moore (a, s) (b, s)@,
 -- close the @s@ wire so that the @s@ produced at one tick is fed back as
 -- input at the next tick. This is the productive, strict-accumulator-safe
 -- analogue of the cartesian trace: the delay is explicit in the wiring
 -- rather than implicit in a lazy knot.
 --
--- Compare with the cartesian 'yank' on 'Mealy', which ties a lazy knot
+-- Compare with the cartesian 'yank' on 'Moore', which ties a lazy knot
 -- and diverges for strict state; 'register' keeps strict state cells sound
 -- by making the one-tick delay observable.
 --
@@ -742,8 +756,8 @@ delay s0 = Mealy (const s0) (const id) id
 -- (e.g. affine/stateless feedback such as @ewmaBody@), the same wiring can
 -- be expressed by swapping the feedback wire into the active position,
 -- applying 'strength' ('delay' s0), and tracing.
-register :: s -> Mealy (a, s) (b, s) -> Mealy a b
-register s0 (Mealy i st ex) = Mealy i' st' ex'
+register :: s -> Moore (a, s) (b, s) -> Moore a b
+register s0 (Moore i st ex) = Moore i' st' ex'
   where
     i' a = i (a, s0)
     st' s a = st s (a, snd (ex s))
@@ -758,7 +772,7 @@ register s0 (Mealy i st ex) = Mealy i' st' ex'
 -- reproduces 'scanProcess'.
 --
 -- >>> let acc = Process 0 (+) (\x -> x) :: Process Int Int Int
--- >>> scan (bodyToMealy (processToBody acc) 0) [1, 2, 3]
+-- >>> scan (bodyToMoore (processToBody acc) 0) [1, 2, 3]
 -- [1,3,6]
 processToBody :: Process s a b -> Body (,) s (->) a b
 processToBody pp =
@@ -767,23 +781,23 @@ processToBody pp =
      in (s', processExtract pp s')
 {-# INLINEABLE processToBody #-}
 
--- | Eliminate a 'Mealy' by exposing its hidden state as a cartesian body.
+-- | Eliminate a 'Moore' by exposing its hidden state as a cartesian body.
 --
--- The continuation receives the seeding function ('Mealy' inject) together
+-- The continuation receives the seeding function ('Moore' inject) together
 -- with the body threading the hidden state: scanning the body seeded by
 -- @inject a0@ reproduces 'scan' after its first output.
 --
 -- >>> let acc = Process 0 (+) (\x -> x) :: Process Int Int Int
--- >>> scan (asMealy acc) [0, 1, 2, 3]
+-- >>> scan (asMoore acc) [0, 1, 2, 3]
 -- [0,1,3,6]
--- >>> mealyToSomeBody (asMealy acc) (\inj b -> scan (bodyToMealy b (inj 0)) [1, 2, 3])
+-- >>> mooreToSomeBody (asMoore acc) (\inj b -> scan (bodyToMoore b (inj 0)) [1, 2, 3])
 -- [1,3,6]
-mealyToSomeBody :: Mealy a b -> (forall s. (a -> s) -> Body (,) s (->) a b -> r) -> r
-mealyToSomeBody (Mealy inject step extract) k =
+mooreToSomeBody :: Moore a b -> (forall s. (a -> s) -> Body (,) s (->) a b -> r) -> r
+mooreToSomeBody (Moore inject step extract) k =
   k inject (Body $ \(s, a) -> let s' = step s a in (s', extract s'))
-{-# INLINEABLE mealyToSomeBody #-}
+{-# INLINEABLE mooreToSomeBody #-}
 
--- | View a cartesian body as a 'Mealy'.
+-- | View a cartesian body as a 'Moore'.
 --
 -- The body state @s@ becomes the process state, paired with the most recent
 -- output so that the Machine-style @extract@ can be defined.
@@ -792,12 +806,12 @@ mealyToSomeBody (Mealy inject step extract) k =
 --
 -- >>> import Circuit.Body (Body (..))
 -- >>> let adder = Body (\(s, a) -> (s + a, s)) :: Body (,) Int (->) Int Int
--- >>> scan (bodyToMealy adder 3) [1, 2, 3]
+-- >>> scan (bodyToMoore adder 3) [1, 2, 3]
 -- [3,4,6]
-bodyToMealy :: Body (,) s (->) a b -> s -> Mealy a b
-bodyToMealy (Body f) s0 = Mealy inject step extract
+bodyToMoore :: Body (,) s (->) a b -> s -> Moore a b
+bodyToMoore (Body f) s0 = Moore inject step extract
   where
     inject a = f (s0, a)
     step (s, _) a' = f (s, a')
     extract = snd
-{-# INLINEABLE bodyToMealy #-}
+{-# INLINEABLE bodyToMoore #-}

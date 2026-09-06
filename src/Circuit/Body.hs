@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | A span-shaped Mealy machine: a morphism across a tensored channel.
+-- | A span-shaped Moore machine: a morphism across a tensored channel.
 --
 -- @
 --   Body t ch arr a b  =  arr (t ch a) (t ch b)
@@ -12,7 +12,7 @@
 --
 -- Both the channel and the payload enter together, and both exit together.
 -- 'Circuit.Machine.Machine' specializes this shape to a machine over a
--- polynomial interface; 'Circuit.Process.Mealy' is the pointed monomial
+-- polynomial interface; 'Circuit.Process.Moore' is the pointed monomial
 -- special case of that.
 --
 -- == Anatomy

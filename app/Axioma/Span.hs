@@ -6,7 +6,7 @@ where
 
 import Axioma.Common (Verbosity (..), checkV)
 import Circuit.Body (Body (..), seqCompose)
-import Circuit.Process (bodyToMealy, scan)
+import Circuit.Process (bodyToMoore, scan)
 import Circuit.Span
   ( Span (..),
     bodyFromSpan,
@@ -98,7 +98,7 @@ spanTopic verbosity = do
       checkV verbosity "bodyFromSpan runs the apex-list channel" $
         let sp0 = Span [W1, W2, W3] id spR
             inputs = [W1, W2, W3]
-         in scan (bodyToMealy (bodyFromSpan sp0) inputs) inputs == map spR [W1, W2, W3],
+         in scan (bodyToMoore (bodyFromSpan sp0) inputs) inputs == map spR [W1, W2, W3],
       checkV verbosity "span composition agrees with body cascade on pairs" $
         let p :: Span Pin Bit
             p = Span [W1, W2, W3] spL (\case W1 -> O; W2 -> O; W3 -> I)

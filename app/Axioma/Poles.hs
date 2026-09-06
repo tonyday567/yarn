@@ -31,9 +31,9 @@ import Circuit.Equip
     splay0,
   )
 import Circuit.Equip qualified as Poles
-import Circuit.Machine (Machine, MachineObs, branchMachine, machine, machineMorphism, machineObsWith, machineToPolesAt)
+import Circuit.Machine (Machine, MachineObs (..), branchMachine, machine, machineMorphism, machineObsWith, machineToPolesAt)
 import Circuit.Poly (Dir, Mono, Poly (..))
-import Circuit.Process (Mealy (..), Process (..), asMealy, fold, markMealy, markProcess, scan, scanProcess)
+import Circuit.Process (Moore (..), Process (..), asMoore, fold, markMoore, markProcess, scan, scanProcess)
 import Circuit.Tensor (Bias (..))
 import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (void, when)
@@ -115,7 +115,7 @@ polesTopic verbosity = do
               Right i -> (s + i, (s * 2, ()))
             inc = machineObsWith (\s -> (s, ())) (machine stepInc) :: MachineObs Int (Mono Int Int)
             dbl = machineObsWith (\s -> (s * 2, ())) (machine stepDbl) :: MachineObs Int (Mono Int Int)
-            sys = branchMachine odd inc dbl :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
+            sys = moMachine (branchMachine odd inc dbl) :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
             p = machineToPolesAt sys
             inputs = [Left (Right 1), Right (Right 1), Left (Right 1)] :: [Dir ('Sum (Mono Int Int) (Mono Int Int))]
             posOfSome (SomePos i) = posOf i
@@ -134,7 +134,7 @@ polesTopic verbosity = do
               Right i -> (s + i, (s * 2, ()))
             inc = machineObsWith (\s -> (s, ())) (machine stepInc) :: MachineObs Int (Mono Int Int)
             dbl = machineObsWith (\s -> (s * 2, ())) (machine stepDbl) :: MachineObs Int (Mono Int Int)
-            sys = branchMachine odd inc dbl :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
+            sys = moMachine (branchMachine odd inc dbl) :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
             p = machineToPolesAt sys
             r = companion p
             leftCar = posAt @('Sum (Mono Int Int) (Mono Int Int)) (Left (4, ()))
@@ -150,7 +150,7 @@ polesTopic verbosity = do
               Right i -> (s + i, (s * 2, ()))
             inc = machineObsWith (\s -> (s, ())) (machine stepInc) :: MachineObs Int (Mono Int Int)
             dbl = machineObsWith (\s -> (s * 2, ())) (machine stepDbl) :: MachineObs Int (Mono Int Int)
-            sys = branchMachine odd inc dbl :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
+            sys = moMachine (branchMachine odd inc dbl) :: Machine (,) Int (->) ('Sum (Mono Int Int) (Mono Int Int))
             p = machineToPolesAt sys
             inputs = [Left (Right 1), Right (Right 1), Left (Right 1)] :: [Dir ('Sum (Mono Int Int) (Mono Int Int))]
             posOfSome (SomePos i) = posOf i
@@ -182,39 +182,39 @@ polesTopic verbosity = do
       checkV verbosity "markProcess steps payloads through the inner system" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
-            p = asMealy sys
+            p = asMoore sys
          in scan p (map Payload [1, 2, 3]) == [Just 1, Just 3, Just 6],
       checkV verbosity "markProcess halts on a halt mark and emits Nothing thereafter" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
-            p = asMealy sys
+            p = asMoore sys
          in scan p [Payload 1, Payload 2, Mark "HALT", Payload 3] == [Just 1, Just 3, Nothing, Nothing],
       checkV verbosity "markProcess treats non-halt marks as no-ops" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
-            p = asMealy sys
+            p = asMoore sys
          in scan p [Payload 1, Mark "NOOP", Payload 2] == [Just 1, Just 1, Just 3],
       checkV verbosity "markProcess halts immediately when the first input is a halt mark" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
-            p = asMealy sys
+            p = asMoore sys
          in scan p [Mark "HALT", Payload 1] == [Nothing, Nothing],
-      checkV verbosity "markProcess round-trips through Mealy" $
+      checkV verbosity "markProcess round-trips through Moore" $
         let innerP = Process 0 (+) id :: Process Int Int Int
             sys = markProcess (== "HALT") innerP
-            p = asMealy sys
+            p = asMoore sys
          in null (scan p []) && fold p [Payload 1, Payload 2, Mark "HALT"] == Just Nothing,
       -- The documented asymmetry (Process.hs:251): the unpointed
-      -- 'markMealy' has no seed, so an initial mark without payload reaches
-      -- 'error "markMealy: initial mark without payload"' — a runtime
+      -- 'markMoore' has no seed, so an initial mark without payload reaches
+      -- 'error "markMoore: initial mark without payload"' — a runtime
       -- error, not a silent default. 'markProcess' exists precisely to
       -- remove that: its seed is already live, so a non-halt mark is a no-op
       -- from the very first input. Mutation room: delete the error branch in
-      -- 'markMealy' (mapping the initial mark to a made-up state) and the
+      -- 'markMoore' (mapping the initial mark to a made-up state) and the
       -- first oracle silently passes while the asymmetry is gone.
-      checkIOV verbosity "markMealy errors on an initial mark without payload" $ do
-        let inner = Mealy id (+) id :: Mealy Int Int
-            p = markMealy (== "HALT") inner
+      checkIOV verbosity "markMoore errors on an initial mark without payload" $ do
+        let inner = Moore id (+) id :: Moore Int Int
+            p = markMoore (== "HALT") inner
         result <- try (evaluate (fromMaybe 0 (head (scan p [Mark "NOOP"])))) :: IO (Either SomeException Int)
         pure (case result of Left _ -> True; Right _ -> False),
       checkV verbosity "markProcess seeds past the initial-mark asymmetry" $

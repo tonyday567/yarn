@@ -439,17 +439,17 @@ copycat = Poles id id
 -- input supplies it. There are three discharges, and this type is the
 -- explicit one:
 --
--- * input: the first payload seeds the carrier — 'Circuit.Process.asMealy'
+-- * input: the first payload seeds the carrier — 'Circuit.Process.asMoore'
 --   removes the seed of a 'Circuit.Process.Process';
 -- * closure: the loop seeds itself — 'Circuit.Machine.machineToClosed'
 --   removes the carrier of a 'Circuit.Machine.Machine' via
 --   'Circuit.Trace.yank', and the seed is gone from the type;
 -- * explicit: the seed is data, handed to runners such as
 --   'Circuit.Process.asProcessCell' or @'Circuit.Process.scan' composed
---   with 'Circuit.Process.bodyToMealy'.
+--   with 'Circuit.Process.bodyToMoore'.
 --
 -- The same pointing is independently present at each open post: the seed
--- argument of a 'Circuit.Process.bodyToMealy' run, the initial state of a
+-- argument of a 'Circuit.Process.bodyToMoore' run, the initial state of a
 -- 'Circuit.Machine.Machine' run, the seed field of 'Circuit.Process.Process',
 -- the 'Circuit.Category.Pointed' class, the unit pole 'open'. 'Pointed' is
 -- the EM side (an algebra of the @Maybe@ monad, structure on the object);

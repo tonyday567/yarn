@@ -27,7 +27,7 @@ import Circuit.Equip
     vcomp,
     whiskerSq,
   )
-import Circuit.Process (bodyToMealy, scan)
+import Circuit.Process (bodyToMoore, scan)
 import Circuit.Tensor (Action (..), Distributive (..), Tensor (..), Unital (..))
 import Circuit.Traced (Assoc (..), Slide (..), Strength (..))
 import Control.Monad (when)
@@ -109,8 +109,8 @@ cascadeStreamOk :: [Int] -> Bool
 cascadeStreamOk xs =
   let s1 = 0
       s2 = -5
-   in scan (bodyToMealy (seqCompose maxBody sumBody) (s1, s2)) xs
-        == scan (bodyToMealy maxBody s2) (scan (bodyToMealy sumBody s1) xs)
+   in scan (bodyToMoore (seqCompose maxBody sumBody) (s1, s2)) xs
+        == scan (bodyToMoore maxBody s2) (scan (bodyToMoore sumBody s1) xs)
 
 -- | Associativity oracle: 'seqCompose' is associative on input lists.  All
 -- three bodies are input- and state-sensitive; @doublerBody@ was removed
@@ -125,8 +125,8 @@ cascadeAssocOk xs =
       s1 = 7
       s2 = 0
       s3 = -5
-   in scan (bodyToMealy (seqCompose h (seqCompose g f)) ((s1, s2), s3)) xs
-        == scan (bodyToMealy (seqCompose (seqCompose h g) f) (s1, (s2, s3))) xs
+   in scan (bodyToMoore (seqCompose h (seqCompose g f)) ((s1, s2), s3)) xs
+        == scan (bodyToMoore (seqCompose (seqCompose h g) f) (s1, (s2, s3))) xs
 
 -- | 'seqCompose' agrees with the independent reference implementation.
 -- Distinct seeds catch seed mis-pairing.
@@ -134,20 +134,20 @@ seqComposeAgreesOk :: [Int] -> Bool
 seqComposeAgreesOk xs =
   let s1 = 2
       s2 = -3
-   in scan (bodyToMealy (seqCompose maxBody sumBody) (s1, s2)) xs
-        == scan (bodyToMealy (_seqComposeReference maxBody sumBody) (s1, s2)) xs
+   in scan (bodyToMoore (seqCompose maxBody sumBody) (s1, s2)) xs
+        == scan (bodyToMoore (_seqComposeReference maxBody sumBody) (s1, s2)) xs
 
 -- | Left identity for carrier-tensoring composition.
 seqComposeLeftIdOk :: [Int] -> Bool
 seqComposeLeftIdOk xs =
   let s = 7
-   in scan (bodyToMealy (seqCompose sumBody (Body id)) ((), s)) xs == scan (bodyToMealy sumBody s) xs
+   in scan (bodyToMoore (seqCompose sumBody (Body id)) ((), s)) xs == scan (bodyToMoore sumBody s) xs
 
 -- | Right identity for carrier-tensoring composition.
 seqComposeRightIdOk :: [Int] -> Bool
 seqComposeRightIdOk xs =
   let s = 7
-   in scan (bodyToMealy (seqCompose (Body id) sumBody) (s, ())) xs == scan (bodyToMealy sumBody s) xs
+   in scan (bodyToMoore (seqCompose (Body id) sumBody) (s, ())) xs == scan (bodyToMoore sumBody s) xs
 
 -- | Machine-split 'Poles' for the counter body.  The write pole updates state
 -- and posts the new state into the carrier; the read pole observes the carrier
@@ -183,7 +183,7 @@ bodyF = Body $ \(s, a) -> (s, boundaryF a)
 bodyG :: Body (,) s (->) Char String
 bodyG = Body $ \(s, c) -> (s, boundaryG c)
 
--- | The Machine-split 'Poles' representations agree with the original Mealy
+-- | The Machine-split 'Poles' representations agree with the original Moore
 -- bodies over the full bounded state space.
 polesMatchBodyOk :: Bool
 polesMatchBodyOk =
@@ -232,12 +232,12 @@ leftWhiskerBody = Body $ \(s, a) -> (s + a, odd s)
 rightWhiskerObservationalOk :: [Bool] -> Bool
 rightWhiskerObservationalOk rs =
   let sq = rightWhisker counterToParitySq rightWhiskerBody
-      counterOuts = scan (bodyToMealy counterBody 3) rs
-      hOutsSrc = scan (bodyToMealy rightWhiskerBody (-2)) counterOuts
-      sqOutsSrc = scan (bodyToMealy (sqSrc sq) (3, -2)) rs
-      parityOuts = scan (bodyToMealy parityBody False) rs
-      hOutsTgt = scan (bodyToMealy rightWhiskerBody (-2)) parityOuts
-      sqOutsTgt = scan (bodyToMealy (sqTgt sq) (False, -2)) rs
+      counterOuts = scan (bodyToMoore counterBody 3) rs
+      hOutsSrc = scan (bodyToMoore rightWhiskerBody (-2)) counterOuts
+      sqOutsSrc = scan (bodyToMoore (sqSrc sq) (3, -2)) rs
+      parityOuts = scan (bodyToMoore parityBody False) rs
+      hOutsTgt = scan (bodyToMoore rightWhiskerBody (-2)) parityOuts
+      sqOutsTgt = scan (bodyToMoore (sqTgt sq) (False, -2)) rs
    in sqOutsSrc == hOutsSrc && sqOutsTgt == hOutsTgt
 
 -- | Square-preservation check: right whisker yields a commuting square.
@@ -252,12 +252,12 @@ rightWhiskerSquareOk =
 leftWhiskerObservationalOk :: [Int] -> Bool
 leftWhiskerObservationalOk xs =
   let sq = leftWhisker leftWhiskerBody counterToParitySq
-      lOutsSrc = scan (bodyToMealy leftWhiskerBody 1) xs
-      counterOuts = scan (bodyToMealy counterBody 4) lOutsSrc
-      sqOutsSrc = scan (bodyToMealy (sqSrc sq) (1, 4)) xs
-      lOutsTgt = scan (bodyToMealy leftWhiskerBody 1) xs
-      parityOuts = scan (bodyToMealy parityBody True) lOutsTgt
-      sqOutsTgt = scan (bodyToMealy (sqTgt sq) (1, True)) xs
+      lOutsSrc = scan (bodyToMoore leftWhiskerBody 1) xs
+      counterOuts = scan (bodyToMoore counterBody 4) lOutsSrc
+      sqOutsSrc = scan (bodyToMoore (sqSrc sq) (1, 4)) xs
+      lOutsTgt = scan (bodyToMoore leftWhiskerBody 1) xs
+      parityOuts = scan (bodyToMoore parityBody True) lOutsTgt
+      sqOutsTgt = scan (bodyToMoore (sqTgt sq) (1, True)) xs
    in sqOutsSrc == counterOuts && sqOutsTgt == parityOuts
 
 -- | Square-preservation check: left whisker yields a commuting square.
@@ -272,12 +272,12 @@ leftWhiskerSquareOk =
 hcomposeObservationalOk :: [Bool] -> Bool
 hcomposeObservationalOk rs =
   let sq = hcompose echoSq counterToParitySq
-      counterOuts = scan (bodyToMealy counterBody 2) rs
-      echoOutsSrc = scan (bodyToMealy echoBody (-3)) counterOuts
-      sqOutsSrc = scan (bodyToMealy (sqSrc sq) (2, -3)) rs
-      parityOuts = scan (bodyToMealy parityBody False) rs
-      echoOutsTgt = scan (bodyToMealy echoParityBody True) parityOuts
-      sqOutsTgt = scan (bodyToMealy (sqTgt sq) (False, True)) rs
+      counterOuts = scan (bodyToMoore counterBody 2) rs
+      echoOutsSrc = scan (bodyToMoore echoBody (-3)) counterOuts
+      sqOutsSrc = scan (bodyToMoore (sqSrc sq) (2, -3)) rs
+      parityOuts = scan (bodyToMoore parityBody False) rs
+      echoOutsTgt = scan (bodyToMoore echoParityBody True) parityOuts
+      sqOutsTgt = scan (bodyToMoore (sqTgt sq) (False, True)) rs
    in sqOutsSrc == echoOutsSrc && sqOutsTgt == echoOutsTgt
 
 -- | Square-preservation check: horizontal composition yields a commuting square.
@@ -436,7 +436,7 @@ runningSumFB = Body $ \((), (s, a)) -> let s' = s + a in ((), (s', s'))
 -- sums [1,3,6] on input [1,2,3].
 runningSumFeedbackOk :: Bool
 runningSumFeedbackOk =
-  scan (bodyToMealy (feedbackBody runningSumFB) ((), 0)) [1, 2, 3] == [1, 3, 6]
+  scan (bodyToMoore (feedbackBody runningSumFB) ((), 0)) [1, 2, 3] == [1, 3, 6]
 
 -- | Body used in the vanishing law: increment the payload while carrying the
 -- unit feedback wire.
@@ -450,8 +450,8 @@ vanishingDirectBody = Body $ \((), a) -> ((), a + 1)
 -- | A2 Vanishing: feedback over the unit object @()@ is the identity.
 vanishingOk :: Bool
 vanishingOk =
-  scan (bodyToMealy (feedbackBody vanishingFBody) ((), ())) [1, 2, 3]
-    == scan (bodyToMealy vanishingDirectBody ()) [1, 2, 3]
+  scan (bodyToMoore (feedbackBody vanishingFBody) ((), ())) [1, 2, 3]
+    == scan (bodyToMoore vanishingDirectBody ()) [1, 2, 3]
 
 -- | Post-feedback map used in the tightening law: add ten to the output.
 tighteningHBody :: Body (,) () (->) Int Int
@@ -463,8 +463,8 @@ tighteningOk =
   let idS = idBody :: Body (,) () (->) Int Int
       lhs = feedbackBody ((idS `tensorBody` tighteningHBody) `seqCompose` runningSumFB)
       rhs = tighteningHBody `seqCompose` feedbackBody runningSumFB
-   in scan (bodyToMealy lhs (((), ((), ())), 0)) [1, 2, 3]
-        == scan (bodyToMealy rhs (((), 0), ())) [1, 2, 3]
+   in scan (bodyToMoore lhs (((), ((), ())), 0)) [1, 2, 3]
+        == scan (bodyToMoore rhs (((), 0), ())) [1, 2, 3]
 
 -- | Body used in the joining law: two accumulators @(s,t)@ with output @t'@.
 joiningFBody :: Body (,) () (->) ((Int, Int), Int) ((Int, Int), Int)
@@ -488,8 +488,8 @@ joiningOk =
       joiningFBOnce = feedbackBody joiningReassocBody
       joiningFBTwice :: Body (,) (((), Int), Int) (->) Int Int
       joiningFBTwice = feedbackBody joiningFBOnce
-   in scan (bodyToMealy joiningFBTwice (((), 0), 0)) [1, 2, 3]
-        == scan (bodyToMealy (feedbackBody joiningFBody) ((), (0, 0))) [1, 2, 3]
+   in scan (bodyToMoore joiningFBTwice (((), 0), 0)) [1, 2, 3]
+        == scan (bodyToMoore (feedbackBody joiningFBody) ((), (0, 0))) [1, 2, 3]
 
 -- | Body used in the superposing law: add 100 to the parallel stream.
 superposingGBody :: Body (,) () (->) Int Int
@@ -508,8 +508,8 @@ superposingOk :: Bool
 superposingOk =
   let lhs = feedbackBody superposingLhsBody
       rhs = feedbackBody runningSumFB `tensorBody` superposingGBody
-   in scan (bodyToMealy lhs (((), ()), 0)) [(1, 10), (2, 20), (3, 30)]
-        == scan (bodyToMealy rhs (((), 0), ())) [(1, 10), (2, 20), (3, 30)]
+   in scan (bodyToMoore lhs (((), ()), 0)) [(1, 10), (2, 20), (3, 30)]
+        == scan (bodyToMoore rhs (((), 0), ())) [(1, 10), (2, 20), (3, 30)]
 
 -- | Isomorphism used in the sliding law: shift state by one.
 slidingHBody :: Body (,) () (->) Int Int
@@ -526,8 +526,8 @@ slidingOk =
   let hTensorId = slidingHBody `tensorBody` idBody
       lhs = feedbackBody (slidingFBody `seqCompose` hTensorId)
       rhs = feedbackBody (hTensorId `seqCompose` slidingFBody)
-   in scan (bodyToMealy lhs ((((), ()), ()), 0)) [1, 2, 3]
-        == scan (bodyToMealy rhs (((), ((), ())), 1)) [1, 2, 3]
+   in scan (bodyToMoore lhs ((((), ()), ()), 0)) [1, 2, 3]
+        == scan (bodyToMoore rhs (((), ((), ())), 1)) [1, 2, 3]
 
 -- | Braid on @(s, s)@ used to show yanking fails.
 feedbackBraidBody :: Body (,) () (->) (Int, Int) (Int, Int)
@@ -538,8 +538,8 @@ feedbackBraidBody = Body $ \((), (x, y)) -> ((), (y, x))
 yankingFailsOk :: Bool
 yankingFailsOk =
   let fbBraid = feedbackBody feedbackBraidBody
-   in scan (bodyToMealy fbBraid ((), 0)) [1, 2, 3] /= [1, 2, 3]
-        && scan (bodyToMealy fbBraid ((), 0)) [1, 2, 3] == [0, 1, 2]
+   in scan (bodyToMoore fbBraid ((), 0)) [1, 2, 3] /= [1, 2, 3]
+        && scan (bodyToMoore fbBraid ((), 0)) [1, 2, 3] == [0, 1, 2]
 
 -- * Either carrier oracles
 
@@ -1175,8 +1175,8 @@ bisimNonEquivalentOk =
 -- identical outputs.
 bisimStreamOk :: Bool
 bisimStreamOk =
-  scan (bodyToMealy bisim3Body 0) [False, True, False, False, True]
-    == scan (bodyToMealy bisim2Body 0) [False, True, False, False, True]
+  scan (bodyToMoore bisim3Body 0) [False, True, False, False, True]
+    == scan (bodyToMoore bisim2Body 0) [False, True, False, False, True]
 
 -- | Carrier-isomorphism implies bisimulation, but not conversely.  Two
 -- isomorphic two-state machines (states relabelled @10,11@ vs @0,1@) are
@@ -1246,7 +1246,7 @@ equipTopic verbosity = do
       checkV verbosity "associator witness commutes" associatorOk,
       checkV verbosity "strength coherence (strength f == tensor id f)" strengthCoherenceOk,
       checkV verbosity "boundary whisker preserves the square" whiskerSqSquareOk,
-      checkV verbosity "Machine-split poles agree with the Mealy bodies" polesMatchBodyOk,
+      checkV verbosity "Machine-split poles agree with the Moore bodies" polesMatchBodyOk,
       checkV verbosity "interchange law (source)" $
         all interchangeSourceOk [(n, r) | n <- carrierRange, r <- [0, 1, 2, 3]],
       checkV verbosity "interchange law (target)" $

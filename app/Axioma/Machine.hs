@@ -8,7 +8,7 @@ where
 
 import Axioma.Common (Verbosity (..), checkIOV, checkV)
 import Circuit.Linear (Par (..), distL, distR)
-import Circuit.Machine (Machine, MachineObs (..), branchMachine, duplicateMachine, machine, machineObs, machineObsWith, machineToClosed, monoIn, runMachineSum, toEvalMachine)
+import Circuit.Machine (Machine, MachineObs (..), branchMachine, duplicateMachine, machine, machineObs, machineObsWith, machineToClosed, monoDir, monoIn, moore, runMachineSum, toEvalMachine)
 import Circuit.Poly (Dir, Eval (..), Mono, Poly (..))
 import Circuit.Syntax (eval)
 import Control.Category (id)
@@ -18,7 +18,7 @@ import Data.Void (Void, absurd)
 import Prelude hiding (id, (.))
 
 mkMachine :: (s -> a -> s) -> (s -> b) -> MachineObs s (Mono a b)
-mkMachine st ex = machineObs (\s -> EP (EK (ex s), EE (st s)))
+mkMachine st ex = moore (\s -> (ex s, ())) (\s d -> st s (monoDir d))
 
 peekM :: MachineObs s (Mono i o) -> s -> o
 peekM sys s = case toEvalMachine sys s of EP (EK o, EE _) -> o
@@ -148,9 +148,7 @@ machineTopic verbosity = do
             exR s = s + 100
             sysL = mkMachine (\s i -> s + i) exL :: MachineObs Int (Mono Int Int)
             sysR = mkMachine (\s i -> s + i) exR :: MachineObs Int (Mono Int Int)
-            br = branchMachine even sysL sysR
-            observe s = if even s then Left (exL s, ()) else Right (exR s, ())
-            brObs = machineObsWith observe br :: MachineObs Int ('Sum (Mono Int Int) (Mono Int Int))
+            brObs = branchMachine even sysL sysR :: MachineObs Int ('Sum (Mono Int Int) (Mono Int Int))
             (oL, fL) = runMachineSum brObs 2
             (oR, fR) = runMachineSum brObs 3
          in oL == Left 20

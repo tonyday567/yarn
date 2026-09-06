@@ -51,7 +51,7 @@
 -- As a body, the counter is one morphism @arr (Int, Int) (Int, Int)@:
 --
 -- >>> let counterBody = Body (\(n, i) -> (n + i, n)) :: Body (,) Int (->) Int Int
--- >>> scan (bodyToMealy counterBody 0) [1,1,1]
+-- >>> scan (bodyToMoore counterBody 0) [1,1,1]
 -- [0,1,2]
 --
 -- Note the body runner observes before the state updates; the machine
@@ -74,15 +74,15 @@
 --
 -- "Circuit.Machine" views a stateful device as a machine fibered over a
 -- polynomial interface @p@. "Circuit.Process" supplies the runners: the
--- unpointed `Mealy` carrier, the pointed `Process` carrier, and scans.
+-- unpointed `Moore` carrier, the pointed `Process` carrier, and scans.
 -- "Circuit.Stream" is the neutral stream interface, `Uncons` against
 -- `Cons` and `Snoc`.
 --
 -- As a machine, the counter exposes its observation as a polynomial
 -- position, so the observation is read without stepping:
 --
--- >>> let counter = machineObs (\n -> EP (EK n, EE (\i -> n + i))) :: MachineObs Int (Mono Int Int)
--- >>> scan (machineAsMealy counter 0) [1,1,1]
+-- >>> let counter = moore (\n -> (n, ())) (\n d -> n + monoDir d) :: MachineObs Int (Mono Int Int)
+-- >>> scan (machineAsMoore counter 0) [1,1,1]
 -- [1,2,3]
 --
 -- A machine converts to a process, the pointed stream carrier:

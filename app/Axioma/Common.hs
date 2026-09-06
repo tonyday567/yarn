@@ -27,7 +27,7 @@ where
 
 import Circuit.Axioma.Test (check)
 import Circuit.Category (id)
-import Circuit.Process (Mealy (..), register)
+import Circuit.Process (Moore (..), register)
 import Prelude hiding (curry, id, uncurry, (.))
 import Prelude qualified as Pre
 
@@ -55,36 +55,36 @@ checkIOV Axioms name act = do
 checkIOV _ _ act = act
 
 -- | Simple additive process for oracles.
-sumP :: Mealy Int Int
-sumP = Mealy id (+) id
+sumP :: Moore Int Int
+sumP = Moore id (+) id
 
 -- | Pair braid for the (,) trace yanking oracle.
-swapPairP :: Mealy (Int, Int) (Int, Int)
-swapPairP = Mealy id (\_ x -> x) (\(a, b) -> (b, a))
+swapPairP :: Moore (Int, Int) (Int, Int)
+swapPairP = Moore id (\_ x -> x) (\(a, b) -> (b, a))
 
 -- | Either braid for the Either trace yanking oracle.
-swapEitherP :: Mealy (Either Int Int) (Either Int Int)
-swapEitherP = Mealy id (\_ x -> x) swapEither
+swapEitherP :: Moore (Either Int Int) (Either Int Int)
+swapEitherP = Moore id (\_ x -> x) swapEither
   where
     swapEither (Left a) = Right a
     swapEither (Right b) = Left b
 
 -- | EWMA body: stateless affine box with feedback.
-ewmaBody :: Double -> Mealy (Double, Double) (Double, Double)
+ewmaBody :: Double -> Moore (Double, Double) (Double, Double)
 ewmaBody alpha =
-  Mealy
+  Moore
     (\(x, prev) -> alpha * x + (1 - alpha) * prev)
     (\s (x, _) -> alpha * x + (1 - alpha) * s)
     (\s -> (s, s))
 
 -- | Exponentially weighted moving average with initial feedback.
-ewma :: Double -> Double -> Mealy Double Double
+ewma :: Double -> Double -> Moore Double Double
 ewma alpha s0 = register s0 (ewmaBody alpha)
 
 -- | Shared-medium body: adds the input to the shared state and echoes it.
-sharedAddP :: Mealy (Int, Int) (Int, Int)
-sharedAddP = Mealy (Pre.uncurry (+)) (\s (_, a) -> s + a) (\s -> (s, s))
+sharedAddP :: Moore (Int, Int) (Int, Int)
+sharedAddP = Moore (Pre.uncurry (+)) (\s (_, a) -> s + a) (\s -> (s, s))
 
 -- | Shared-medium body: doubles the shared state and echoes the input.
-sharedDoubleP :: Mealy (Int, Int) (Int, Int)
-sharedDoubleP = Mealy (\(s, _) -> s * 2) (\s (_, _) -> s * 2) (\s -> (s, s))
+sharedDoubleP :: Moore (Int, Int) (Int, Int)
+sharedDoubleP = Moore (\(s, _) -> s * 2) (\s (_, _) -> s * 2) (\s -> (s, s))
