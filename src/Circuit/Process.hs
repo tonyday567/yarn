@@ -568,17 +568,17 @@ instance Strength Either Moore where
       snd
 
 instance Yank Either Moore where
-  yank (Moore i st ex) = Moore i' st' ex'
+  yank (Moore i st ex) = Moore i' st' snd
     where
+      -- The state carries its own settled output, so extraction is snd
+      -- and no unsettled case is left over: i' and st' settle before
+      -- they return, so the pair's output is always the settled one.
       settle m = case ex m of
         Left s -> settle (st m (Left s))
-        Right _ -> m
+        Right b -> (m, b)
 
       i' a = settle (i (Right a))
-      st' m a = settle (st m (Right a))
-      ex' m = case ex m of
-        Right b -> b
-        Left _ -> error "Circuit.Process.Yank Either: unsettled state"
+      st' (m, _) a = settle (st m (Right a))
 
 -- * Bimonoid instances (pointwise lift)
 
