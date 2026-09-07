@@ -198,6 +198,7 @@ module Circuit.Cell
     scanProcess,
     scan,
     fold,
+    foldProcess,
     scanThese,
 
     -- * Direction sources
@@ -225,6 +226,7 @@ import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens)
 import Circuit.Tensor (Action (..), Tensor (..), Unit, Unital (..))
 import Circuit.Traced (Assoc (..), Yank (..))
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty (..), toList, (<|))
 import Data.These (These (..))
 import Prelude hiding (id, (.))
 
@@ -722,23 +724,39 @@ scanProcess (Process c (Cell o k)) = \case
 scan :: Moore a b -> [a] -> [b]
 scan (Moore p) = scanProcess p
 
--- | The settled value: 'scan''s last observation. The 'Maybe' is
--- the list's emptiness — @last@'s 'Maybe', imported from
+-- | The settled value: the last observation of the run. The 'Maybe'
+-- is the input list's emptiness — @last@'s 'Maybe', imported from
 -- @Data.List@, nothing to do with Moore: no seed exists that would
 -- make @[]@ produce a value, because there is no state before the
 -- first input. A seed would buy a total 'fold' at the cost of a
 -- spurious leading observation in 'scan' — the trade the pointed
 -- types exist to refuse.
 --
+-- The specification is @fold = last . scan@; the implementation is
+-- the direct state-threading loop ('foldProcess'), O(1) in space —
+-- @reverse@ over 'scan' would hold the entire output. The law is
+-- witnessed at a point, not asserted:
+--
 -- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
--- >>> fold (asMoore p) [1, 2, 3]
+-- >>> let m = asMoore p
+-- >>> fold m [1, 2, 3]
 -- Just 16
--- >>> fold (asMoore p) []
+-- >>> fold m []
 -- Nothing
+-- >>> fold m [1, 2, 3] == (case reverse (scan m [1, 2, 3]) of { [] -> Nothing; (b : _) -> Just b })
+-- True
 fold :: Moore a b -> [a] -> Maybe b
-fold m as = case reverse (scan m as) of
+fold (Moore p) = foldProcess p
+
+-- | The direct loop behind 'fold': state in, one observation held at
+-- a time. Agrees with 'scan' by the law witnessed there.
+foldProcess :: Process (,) s (->) a b -> [a] -> Maybe b
+foldProcess (Process c (Cell o k)) = \case
   [] -> Nothing
-  (b : _) -> Just b
+  (a : as) -> Just (go (c a) as)
+  where
+    go s (a : as) = go (k (s, a)) as
+    go s [] = o s
 
 -- | The list runner at the 'These' schedule: 'These' absorbs an input
 -- and emits the post-step observation in one tick, 'That' halts on
@@ -754,20 +772,18 @@ fold m as = case reverse (scan m as) of
 -- >>> scanThese p [1, 2] == scan (asMoore p) [1, 2]
 -- True
 --
--- The check the cut was waiting on, answered in the negative: @[]@
--- does /not/ come from the schedule. The generator's 'That' halt
--- always emits its payload, so 'unfold' at 'These' never yields
--- @[]@ — finite nonempty lists are reachable, the empty list is
--- not, and the class haddock says "may end" on purpose. The nil
--- case is the runner's own, the same shape as 'scanProcess': there
--- is no state before the first input, and the tensor cannot commit
--- for you. What 'These' buys a runner is rescheduling without
--- emission ('This') and halt-with-payload ('That') — a schedule,
--- not a nil.
+-- The check the cut was waiting on, answered in the negative and now
+-- a type-level fact: @Nu These (->) b = NonEmpty b@, so the unfold
+-- half of this runner /cannot/ produce nil — the 'That' halt always
+-- emits its payload. The nil case is visibly the runner's own, the
+-- same shape as 'scanProcess': there is no state before the first
+-- input, and the tensor cannot commit for you. What 'These' buys a
+-- runner is rescheduling without emission ('This') and
+-- halt-with-payload ('That') — a schedule, not a nil.
 scanThese :: forall s a b. Process (,) s (->) a b -> [a] -> [b]
 scanThese (Process c (Cell o k)) = \case
   [] -> []
-  (a : as) -> unfold gen (Nothing, a, as)
+  (a : as) -> toList (unfold gen (Nothing, a, as))
   where
     gen :: (Maybe s, a, [a]) -> These (Maybe s, a, [a]) b
     gen (ms, a, rest) =
@@ -897,9 +913,9 @@ closedToGenerator c = unitr' .> morphism (fuse c)
 -- base arrow decides what shape the forever takes:
 --
 -- @
--- Nu (,)   (->) b = [b]   — the stream
--- Nu Either (->) b = b    — the settle
--- Nu These  (->) b = [b]  — the scheduled list, may end
+-- Nu (,)   (->) b = [b]        — the stream, over-approximates: always infinite
+-- Nu Either (->) b = b         — the settle, exact
+-- Nu These  (->) b = NonEmpty b — the scheduled list, may end, exact
 -- @
 --
 -- 'Nu' at @(,)@ lands on the list deliberately: the library's stream
@@ -955,14 +971,17 @@ closedToGenerator c = unitr' .> morphism (fuse c)
 -- The class takes no 'Yank' superclass: the only row where the two
 -- coincide needs no extra structure to say so.
 --
--- One consequence of the table, logged: @Nu (,) (->) b@ and
--- @Nu These (->) b@ are the same type at different termination — the
--- @(,)@ stream is always infinite, the 'These' list may end. A
--- runner polymorphic in @t@ sees @[b]@ either way and cannot read
--- termination off the type; the tensor's promise is discarded at
--- the boundary. The list decision stands, but the sharpest argument
--- for ever introducing a dedicated stream type is type-level
--- termination, not laziness.
+-- One consequence of the table, logged and then half-fixed: @Nu (,)
+-- (->) b@ and @Nu These (->) b@ were the same type at different
+-- termination — the @(,)@ stream is always infinite, the 'These'
+-- list may end — and a runner polymorphic in @t@ saw @[b]@ either
+-- way, unable to read termination off the type; the tensor's promise
+-- was discarded at the boundary. The 'These' row no longer drops it:
+-- @NonEmpty@ is in base, and the type now says finite-nonempty where
+-- the generator always was. The @(,)@ row still over-approximates —
+-- always infinite, typed as a list — and its honest carrier would be
+-- a stream type, which remains the sharpest argument for ever
+-- introducing one: type-level termination, not laziness.
 class
   (Category arr) =>
   Unfold (t :: Type -> Type -> Type) (arr :: Type -> Type -> Type)
@@ -1009,34 +1028,37 @@ instance Unfold Either (->) where
 
 -- | Inclusive: the scheduled list. 'This' reschedules without
 -- emitting, 'These' is the cons cell — emit and continue — and
--- 'That' is the nil: halt with the final payload. The list may end,
--- unlike the @(,)@ stream. The generator reads 'These' as
+-- 'That' halts with the final payload — and the behaviour is a
+-- 'Data.List.NonEmpty.NonEmpty': finite, never empty, which is the
+-- type-level content of the runner finding below. Unlike the @(,)@
+-- stream, the list may end. The generator reads 'These' as
 -- produce-and-reschedule, where the body of 'Yank' 'These' reads the
 -- same constructor as exit (@These _ c -> c@). The conventions
 -- differ, and the derivation shows which way the strength runs:
 -- @yank f = head . unfold g . That@ with @g@ rescheduling a body
 -- 'This' on the reconstructed state and mapping both exit branches
--- to a generator 'That' — the settled payload is the singleton
--- stream's head. Witnessed at a point:
+-- to a generator 'That' — the settled payload is the singleton's
+-- head, total at 'NonEmpty' in a way it never was at @[]@. Witnessed
+-- at a point:
 --
 -- >>> let body x = (case x of That n | n > 0 -> This (n - 1); That n -> That n; This s -> These (s + 1) (s * 10)) :: These Int Int
 -- >>> yank body (3 :: Int)
 -- 20
 -- >>> let gen x = case body x of This s -> This (This s); That c -> That c; These _ c -> That c
 -- >>> unfold gen (That 3)
--- [20]
+-- 20 :| []
 --
 -- >>> let ticks ch = if ch <= (0 :: Int) then That ch else These (ch - 1) ch
 -- >>> unfold ticks 3
--- [3,2,1,0]
+-- 3 :| [2,1,0]
 instance Unfold These (->) where
-  type Nu These (->) b = [b]
+  type Nu These (->) b = NonEmpty b
   unfold g = go
     where
       go ch = case g ch of
         This ch' -> go ch'
-        That b -> [b]
-        These ch' b -> b : go ch'
+        That b -> b :| []
+        These ch' b -> b <| go ch'
 
 -- | A cell is an uncurried polynomial lens: @applyLens@ shows a
 -- @Lens s s o i@ is @get :: s -> o@ plus @put :: s -> i -> s@ —
