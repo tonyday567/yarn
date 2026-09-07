@@ -182,6 +182,11 @@ module Circuit.Cell
     Moore (..),
     asMoore,
 
+    -- * The runners
+    scanProcess,
+    scan,
+    fold,
+
     -- * Direction sources
     Cocell,
     cocell,
@@ -667,6 +672,60 @@ instance Category Moore where
       step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
       extract (_, s2) = o2 s2
   {-# INLINE (.) #-}
+
+-- * The runners
+
+-- | The commit-then-observe chain, run finitely. One observation per
+-- input, taken after that input is absorbed: @s0 = commit a1@, emit
+-- @observe s0@, then @s' = step (s, a)@, emit @observe s'@, and so
+-- on down the list.
+-- The first state comes from the first input — there is no state
+-- before it, so @scanProcess p [] = []@ falls out of the shape: the
+-- nil case is empty, not a seed consulted and a convention chosen.
+-- The post-step convention is forced by the type, and the iconic
+-- empty run is total with no machinery.
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> scanProcess p [1, 2, 3]
+-- [6,10,16]
+-- >>> scanProcess p []
+-- []
+scanProcess :: Process (,) s (->) a b -> [a] -> [b]
+scanProcess (Process c (Cell o k)) = \case
+  [] -> []
+  (a : as) -> let s0 = c a in o s0 : go s0 as
+  where
+    go s (a : as) = let s' = k (s, a) in o s' : go s' as
+    go _ [] = []
+
+-- | The runner 'Moore' exists for: the existential does no work here
+-- — the machine is scanned through its 'Process' half.
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> scan (asMoore p) [1, 2, 3]
+-- [6,10,16]
+-- >>> scan (asMoore p) []
+-- []
+scan :: Moore a b -> [a] -> [b]
+scan (Moore p) = scanProcess p
+
+-- | The settled value: 'scan''s last observation. The 'Maybe' is
+-- the list's emptiness — @last@'s 'Maybe', imported from
+-- @Data.List@, nothing to do with Moore: no seed exists that would
+-- make @[]@ produce a value, because there is no state before the
+-- first input. A seed would buy a total 'fold' at the cost of a
+-- spurious leading observation in 'scan' — the trade the pointed
+-- types exist to refuse.
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> fold (asMoore p) [1, 2, 3]
+-- Just 16
+-- >>> fold (asMoore p) []
+-- Nothing
+fold :: Moore a b -> [a] -> Maybe b
+fold m as = case reverse (scan m as) of
+  [] -> Nothing
+  (b : _) -> Just b
 
 -- * Direction sources
 
