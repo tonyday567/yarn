@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | A state machine as two unwired legs — an observation and a step —
 -- and the grid of types around it.
@@ -49,6 +50,9 @@
 -- * 'Machine' — where the interface algebra lives: @Sum@, @Comp@,
 --   @PTensor@, the "Circuit.Container" fibres, the Spivak coalgebra
 --   layer.
+-- * The run — 'closedToGenerator' (@fuse@ plus a unitor, copy-priced)
+--   and 'Unfold' (the generator settled to its behaviour): build a
+--   machine, close it against a source, take its stream finitely.
 -- * @Process@ — the seed discharge (not in this module yet).
 -- * @Moore@ — the existential discharge: hiding the carrier is what
 --   makes composition close (not in this module yet).
@@ -120,11 +124,10 @@
 -- @commit@ is already 'Poles'' field name in this module.
 --
 -- 'pair' closes a producer and a consumer over the same interface.
--- What it does not package is the unbounded run: that wants a
--- generator conversion ('fuse' plus a unitor, costing copy) and an
--- unfold-at-@(,)@ packaging — neither is here, because 'observe' and
--- 'step' alternated by the caller already IS the run, and the
--- packaging should arrive as packaging.
+-- The unbounded run is packaged now too: 'closedToGenerator' (fuse
+-- plus a unitor, costing copy) turns the closed cell into a
+-- generator, and 'Unfold' settles the generator to its behaviour —
+-- the counter doctest there takes the stream finitely.
 --
 -- == Candidate replacement
 --
@@ -171,6 +174,10 @@ module Circuit.Cell
     cocell,
     pair,
 
+    -- * The run
+    closedToGenerator,
+    Unfold (..),
+
     -- * Lens bridge
     cellAsLens,
     lensAsCell,
@@ -185,14 +192,17 @@ import Circuit.Bimonoid (CopyT (..), Discard (..), DiscardT (..))
 import Circuit.Category (Category (..), Op (..), (.>))
 import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens)
 import Circuit.Tensor (Action (..), Tensor (..), Unit, Unital (..))
-import Circuit.Traced (Assoc (..))
+import Circuit.Traced (Assoc (..), Yank (..))
 import Data.Kind (Type)
+import Data.These (These (..))
 import Prelude hiding (id, (.))
 
 -- $setup
 -- >>> :set -XOverloadedRecordDot
 -- >>> import Circuit.Category (Op (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Pos, applyLens)
+-- >>> import Circuit.Traced (yank)
+-- >>> import Data.These (These (..))
 
 -- | A stateful cell: an observation and a step, unwired.
 --
@@ -380,11 +390,12 @@ monoMachine (Cell o k) =
 -- channel-forgetting tensor: with @Const ch a = a@,
 -- @commit :: arr (Const ch a) ch = arr a ch@.  Sharper at the fused
 -- grade: @Body Const ch arr a b = arr (Const ch a) (Const ch b) =
--- arr a b@ — the fused span at π₂ is the base arrow, which is why
--- 'Poles' needs no @t@: its fused form has already left the channel
--- behind.
+-- arr a b@ — the fused span at the second projection is the base
+-- arrow, which is why 'Poles' needs no @t@: its fused form has
+-- already left the channel behind.
 --
--- But π₂ runs out exactly where 'Cell''s @t@ works.  It is left-unital
+-- But the projection runs out exactly where 'Cell''s @t@ works.  It is
+-- left-unital
 -- only — @Const (Unit t) a = a@ holds, but @Const a (Unit t) = Unit t@ —
 -- so 'Unital' is uninhabitable there and 'fuse' cannot be instantiated
 -- at all: 'close' and 'fuse' are parallel moves at two grades, not one
@@ -607,6 +618,117 @@ pair (Cell _ pk) (Cell o k) = Cell observeP stepP
     idP = id
     idC :: arr chC chC
     idC = id
+
+-- * The run
+
+-- | The closed cell as a generator: 'fuse' plus the right unitor.
+--
+-- @
+-- fuse c          :: Body t ch arr (Unit t) b = arr (t ch (Unit t)) (t ch b)
+-- closedToGenerator c = unitr' .> morphism (fuse c)
+-- @
+--
+-- The price is 'fuse''s — a copy at the whole input wire and a
+-- discard of the unit payload, both constraints inherited from it.
+-- What 'pair' produces, this runs: the producer/consumer/closed
+-- family is closed under generation.
+--
+-- The counter, finished — built, closed against a source, and taken
+-- finitely:
+--
+-- >>> let counter = Cell id (\(ch, a) -> ch + a) :: Cell (,) Int (->) Int Int
+-- >>> let ones = cocell (const ()) (\() -> ((), 1)) :: Cocell (,) () (->) Int ()
+-- >>> take 4 (unfold (closedToGenerator (pair ones counter)) ((), 0))
+-- [0,1,2,3]
+closedToGenerator ::
+  forall t ch arr b.
+  (CopyT t arr (t ch (Unit t)), DiscardT t arr (Unit t)) =>
+  Cell t ch arr (Unit t) b ->
+  arr ch (t ch b)
+closedToGenerator c = unitr' .> morphism (fuse c)
+
+-- | Iteration as a capability, added like 'Yank': not derivable from
+-- finite structure. A generator @arr ch (t ch b)@ steps its channel
+-- under @t@, emitting a @b@ each tick; 'unfold' settles it to the
+-- behaviour type @Nu t arr b@. Where 'yank' closes the feedback loop,
+-- 'unfold' refuses it — the channel runs forward forever, and the
+-- base arrow decides what shape the forever takes:
+--
+-- @
+-- Nu (,)   (->) b = [b]   — the stream
+-- Nu Either (->) b = b    — the settle
+-- Nu These  (->) b = [b]  — the scheduled list, nil reachable
+-- @
+--
+-- 'Nu' at @(,)@ lands on the list deliberately: the library's stream
+-- carrier already is @[b]@ — "Circuit.Stream"'s 'Uncons'/'Cons'/'Snoc'
+-- classes are instantiated at @[]@, and the lazy-knot witnesses in
+-- "Circuit.Traced" return lists. A dedicated stream type would wrap
+-- exactly the laziness Haskell lists already have, and 'Nu' is the
+-- type every runner's output will mention.
+--
+-- The Either row is a theorem, not a coincidence: settling a
+-- generator is iterating it to its 'Right', and that is 'yank' —
+-- @unfold g = yank (either g g)@, the codiagonal pairing the two
+-- entry points into one loop. So at 'Either', 'Unfold' adds nothing
+-- beyond 'Yank', and the instance below delegates rather than
+-- duplicating the loop. At @(,)@ and 'These' no such reduction
+-- exists — a knot is not an iteration — so the class takes no
+-- 'Yank' superclass: Either is derived, the others are not.
+class
+  (Category arr) =>
+  Unfold (t :: Type -> Type -> Type) (arr :: Type -> Type -> Type)
+  where
+  -- | The behaviour type: what running a generator forever settles to.
+  type Nu t arr b
+
+  -- | Settle a generator to its behaviour.
+  unfold :: arr ch (t ch b) -> arr ch (Nu t arr b)
+
+-- | Cartesian: the stream. Laziness is the point — the lazy @(:)@
+-- puts each element in front of the next channel step, so a
+-- productive generator yields an infinite list.
+--
+-- >>> take 4 (unfold (\ch -> (ch + 1, ch)) (0 :: Int))
+-- [0,1,2,3]
+instance Unfold (,) (->) where
+  type Nu (,) (->) b = [b]
+  unfold g = go
+    where
+      go ch = case g ch of (ch', b) -> b : go ch'
+
+-- | Cocartesian: the settle. @Nu Either (->) b = b@ — the generator
+-- iterates to its 'Right' and hands over the payload, so the
+-- instance is the theorem: 'unfold' delegates to 'yank' through the
+-- codiagonal.
+--
+-- >>> let down n = if n <= (0 :: Int) then Right n else Left (n - 1)
+-- >>> unfold down 5
+-- 0
+-- >>> unfold down 5 == yank (either down down) 5
+-- True
+instance Unfold Either (->) where
+  type Nu Either (->) b = b
+  unfold g = yank (either g g)
+
+-- | Inclusive: the scheduled list. 'This' reschedules without
+-- emitting, 'These' is the cons cell — emit and continue — and
+-- 'That' is the nil: halt with the final payload. The list may end,
+-- unlike the @(,)@ stream. ('Yank' reads a body 'These' as exit; a
+-- generator reads 'These' as produce-and-reschedule — the exit
+-- branch of a generator is 'That'.)
+--
+-- >>> let ticks ch = if ch <= (0 :: Int) then That ch else These (ch - 1) ch
+-- >>> unfold ticks 3
+-- [3,2,1,0]
+instance Unfold These (->) where
+  type Nu These (->) b = [b]
+  unfold g = go
+    where
+      go ch = case g ch of
+        This ch' -> go ch'
+        That b -> [b]
+        These ch' b -> b : go ch'
 
 -- | A cell is an uncurried polynomial lens: @applyLens@ shows a
 -- @Lens s s o i@ is @get :: s -> o@ plus @put :: s -> i -> s@ —
