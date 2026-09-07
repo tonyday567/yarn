@@ -25,8 +25,13 @@
 -- fused,   unpointed       Body           Body at (Dir p, Pos p) — needs no name
 -- unfused, seed as data    Process        —   (not here yet)
 -- unfused, hidden carrier  Moore          —   (not here yet)
--- carrier in the trace     —              Closed
+-- carrier in the trace     —              Closed          (not here yet)
 -- @
+--
+-- 'Circuit.Machine.Closed' is @Trace t arr (Dir p) (Pos p)@, and on
+-- this spine it is downstream of 'fuse': the trace needs the fused
+-- span, so a cell arrives there by @yank . fuse@ — copy-gated, not a
+-- peer of the unfused rows.
 --
 -- Fused\/unfused is the Mealy\/Moore axis, disposed of without a
 -- parameter: 'Body' permits the emit leg to read the input; 'Cell'
@@ -61,7 +66,8 @@
 --
 -- Same read leg; the write legs differ by exactly whether the incoming
 -- channel is in scope.  The shared 'observe' field name makes that
--- visible at every use site (and costs 'DuplicateRecordFields').  In
+-- visible at the types (costing 'DuplicateRecordFields'; with
+-- 'OverloadedRecordDot' the selectors read @c.observe@ regardless).  In
 -- optic language, 'Poles' is an Adapter (no @t@ parameter — profunctor
 -- structure suffices), 'Cell' is a Lens (the tensor is needed because
 -- 'step' holds the source alongside the focus), and 'Body' at
@@ -151,6 +157,7 @@ module Circuit.Cell
     Cap (..),
     capT,
     close,
+    unclose,
     copycat,
 
     -- * Pointed eliminators
@@ -183,6 +190,7 @@ import Data.Kind (Type)
 import Prelude hiding (id, (.))
 
 -- $setup
+-- >>> :set -XOverloadedRecordDot
 -- >>> import Circuit.Category (Op (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Pos, applyLens)
 
@@ -199,9 +207,9 @@ import Prelude hiding (id, (.))
 -- Moore condition by type, not by obligation.
 --
 -- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
--- >>> case c of Cell o _ -> o 3
+-- >>> c.observe 3
 -- 6
--- >>> case c of Cell _ k -> k (3, 5)
+-- >>> c.step (3, 5)
 -- 8
 data Cell (t :: Type -> Type -> Type) s (arr :: Type -> Type -> Type) a b = Cell
   { -- | The observation: read the output from the state alone.
@@ -250,11 +258,16 @@ instance (Category arr) => Category (Body t ch arr) where
 -- and the constraint is that fact made arrow-level: the input wire
 -- must fork ('Circuit.Bimonoid.CopyT' at the input), and reading the
 -- state out of the input discards the payload
--- ('Circuit.Bimonoid.DiscardT').  On a cartesian base both are free;
--- on a linear or relational one they are not ambient, and neither is
--- fusion.  At @t = Either@ the projection has no arrow — a flowchart
--- tick carries no fusible channel — and the constraint correctly
--- refuses.
+-- ('Circuit.Bimonoid.DiscardT').  One precision: the copy is taken at
+-- the whole input wire, so at a linear base the payload must be
+-- copyable, not just the state.  The minimal statement of the
+-- requirement is a copy at the state alone — the state is what is
+-- consulted twice; this routing takes the bigger copy in exchange for
+-- avoiding an associator and a braiding step.  On a cartesian base
+-- both are free; on a linear or relational one they are not ambient,
+-- and neither is fusion.  At @t = Either@ the projection has no
+-- arrow — a flowchart tick carries no fusible channel — and the
+-- constraint correctly refuses.
 --
 -- The observation reads the /incoming/ state; a mutant that observed
 -- the stepped state would print @(8,16)@ below.
@@ -282,9 +295,9 @@ fuse (Cell o k) =
 -- price of the slot's droppable wires.
 --
 -- >>> let adder = Body (\(s, a) -> (s + a, s)) :: Body (,) Int (->) Int Int
--- >>> case unfuse adder of Cell o _ -> o (8, 3)
+-- >>> (unfuse adder).observe (8, 3)
 -- 3
--- >>> case unfuse adder of Cell _ k -> k ((8, 3), 5)
+-- >>> (unfuse adder).step ((8, 3), 5)
 -- (13,8)
 --
 -- Fused back, the stored output echoes one tick late — the inclusion
@@ -339,9 +352,9 @@ newtype Machine (t :: Type -> Type -> Type) s (arr :: Type -> Type -> Type) (p :
 --
 -- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
 -- >>> let m = monoMachine c :: Machine (,) Int (->) (Mono Int Int)
--- >>> case m of Machine (Cell o _) -> o 3
+-- >>> m.machineCell.observe 3
 -- (6,())
--- >>> case m of Machine (Cell _ k) -> k (3, Right 5)
+-- >>> m.machineCell.step (3, Right 5)
 -- 8
 monoMachine ::
   (Tensor t arr, Unital (,) arr, Unital Either arr) =>
@@ -364,10 +377,20 @@ monoMachine (Cell o k) =
 -- source must be held alongside the focus.
 --
 -- As a fact about the consumer direction, 'Poles' is 'Cell' at a
--- channel-forgetting tensor: @commit :: arr (Const ch a) ch = arr a ch@.
--- The producer direction dies under it — a 'Cocell' step
--- @arr ch (Const ch a)@ returns no channel — so the fact stays a
--- haddock line and 'Poles' stays its own type.
+-- channel-forgetting tensor: with @Const ch a = a@,
+-- @commit :: arr (Const ch a) ch = arr a ch@.  Sharper at the fused
+-- grade: @Body Const ch arr a b = arr (Const ch a) (Const ch b) =
+-- arr a b@ — the fused span at π₂ is the base arrow, which is why
+-- 'Poles' needs no @t@: its fused form has already left the channel
+-- behind.
+--
+-- But π₂ runs out exactly where 'Cell''s @t@ works.  It is left-unital
+-- only — @Const (Unit t) a = a@ holds, but @Const a (Unit t) = Unit t@ —
+-- so 'Unital' is uninhabitable there and 'fuse' cannot be instantiated
+-- at all: 'close' and 'fuse' are parallel moves at two grades, not one
+-- function at two instantiations.  The producer direction also dies
+-- under it — a 'Cocell' step @arr ch (Const ch a)@ returns no channel.
+-- So the fact stays a haddock line and 'Poles' stays its own type.
 data Poles ch arr a b = Poles
   { -- | Write leg: commit the payload to the channel, blind to the
     -- incoming channel.
@@ -402,21 +425,37 @@ newtype Cap t arr ch = Cap
 capT :: forall t arr ch. (DiscardT t arr ch) => Cap t arr ch
 capT = Cap (discardT @t)
 
--- | Close a same-carrier pole by composing its legs.  This is the
--- co-Yoneda map @∃ch. Poles ch arr a b ≅ arr a b@; 'copycat' is its
--- canonical section, and @close copycat = id@ is the round trip.
+-- | Close a same-carrier pole by composing its legs: a component, at
+-- this carrier, of the co-Yoneda map @∃ch. Poles ch arr a b ≅ arr a b@.
+-- The existential closure of a pole is the base arrow — closing a
+-- 'Poles' loses everything, which is why the library closes squares
+-- into 'Circuit.Equip.TwoCell' and never closes poles.
 --
 -- >>> close (Poles (* 2) (+ 1)) 3
 -- 7
 close :: (Category arr) => Poles ch arr a b -> arr a b
 close (Poles c o) = c .> o
 
--- | The copycat strategy: identity legs at any carrier.
+-- | The section of 'close': a plain arrow as a pole whose carrier is
+-- its own output type, with an identity read leg.  The round trip is
+-- @close . unclose = id@; the other direction, @unclose . close@, is
+-- not the identity — it moves the carrier from @ch@ to @b@.  Same
+-- asymmetry as 'fuse'\/'unfuse', one grade down: total in both
+-- directions, carrier-changing on the return.
+--
+-- >>> close (unclose (+ 1)) 3
+-- 4
+unclose :: (Category arr) => arr a b -> Poles b arr a b
+unclose f = Poles f id
+
+-- | The copycat strategy: identity legs at any carrier —
+-- @unclose id@, and @close copycat = id@ is the round trip's special
+-- case.
 --
 -- >>> close (copycat :: Poles Int (->) Int Int) 4
 -- 4
 copycat :: (Category arr) => Poles ch arr ch ch
-copycat = Poles id id
+copycat = unclose id
 
 -- | The pointed observation: the read leg, precomposed with a point.
 --
@@ -453,9 +492,9 @@ poke pt (Cell _ k) = unitl' .> tensor (runPoint pt) id .> k
 -- >>> let pt = Point (\() -> 3) :: Point (,) (->) Int
 -- >>> let m = monoMachine c
 -- >>> let p = polesOf pt m :: Poles Int (->) (Dir (Mono Int Int)) (Pos (Mono Int Int))
--- >>> commit p (Right 5)
+-- >>> p.commit (Right 5)
 -- 8
--- >>> case p of Poles _ o -> o 3
+-- >>> p.observe 3
 -- (6,())
 --
 -- The pointed one-shot run is then just a close:
@@ -478,9 +517,9 @@ polesOf pt (Machine c@(Cell o _)) = Poles (poke pt c) o
 --
 -- >>> let pl = Poles (* 10) (+ 1) :: Poles Int (->) Int Int
 -- >>> let cpl = cellOf (capT :: Cap (,) (->) Int) pl
--- >>> step cpl (99, 5)
+-- >>> cpl.step (99, 5)
 -- 50
--- >>> case cpl of Cell o _ -> o 7
+-- >>> cpl.observe 7
 -- 8
 cellOf :: (Tensor t arr) => Cap t arr ch -> Poles ch arr a b -> Cell t ch arr a b
 cellOf (Cap cap) (Poles w r) =
@@ -500,9 +539,9 @@ type Cocell t ch arr a b = Cell t ch (Op arr) a b
 -- | Build a cocell from its two legs, without the 'Op' wrappers.
 --
 -- >>> let ones = cocell (const ()) (\() -> ((), 1)) :: Cocell (,) () (->) Int ()
--- >>> runOp (step ones) ()
+-- >>> runOp (ones.step) ()
 -- ((),1)
--- >>> case ones of Cell o _ -> runOp o ()
+-- >>> runOp (ones.observe) ()
 -- ()
 cocell :: arr b ch -> arr ch (t ch a) -> Cocell t ch arr a b
 cocell o s = Cell (Op o) (Op s)
@@ -535,23 +574,22 @@ cocell o s = Cell (Op o) (Op s)
 -- >>> let counter = Cell id (\(ch, a) -> ch + a) :: Cell (,) Int (->) Int Int
 -- >>> let ones = cocell (const ()) (\() -> ((), 1)) :: Cocell (,) () (->) Int ()
 -- >>> let closed = pair ones counter
--- >>> case closed of Cell o _ -> o ((), 3)
+-- >>> closed.observe ((), 3)
 -- 3
--- >>> case closed of Cell _ k -> k (((), 3), ())
+-- >>> closed.step (((), 3), ())
 -- ((),4)
 --
 -- An order-sensitive consumer pins the braid (a braid-dropped mutant
 -- would print @((),-2)@):
 --
 -- >>> let down = Cell id (\(ch, a) -> ch - a) :: Cell (,) Int (->) Int Int
--- >>> case pair ones down of Cell _ k -> k (((), 3), ())
+-- >>> (pair ones down).step (((), 3), ())
 -- ((),2)
 --
 -- Two ticks by hand: 'observe' and 'step' alternated by the caller is
 -- the run — pre-step readings, the ε-output included:
 --
--- >>> let ticks c = case c of Cell o k -> let ch1 = k (((), 0), ()); ch2 = k (ch1, ()) in (o ((), 0), o ch1, o ch2)
--- >>> ticks closed
+-- >>> let ch1 = closed.step (((), 0), ()); ch2 = closed.step (ch1, ()) in (closed.observe ((), 0), closed.observe ch1, closed.observe ch2)
 -- (0,1,2)
 pair ::
   forall t chP chC arr a x b.
@@ -585,7 +623,7 @@ cellAsLens (Cell o k) = lens o (curry k)
 -- | The other shuffle: a lens as a cell.  Round trip:
 --
 -- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
--- >>> case lensAsCell (cellAsLens c) of Cell o k -> (o 3, k (3, 5))
+-- >>> let c' = lensAsCell (cellAsLens c) in (c'.observe 3, c'.step (3, 5))
 -- (6,8)
 lensAsCell :: Lens s s o i -> Cell (,) s (->) i o
 lensAsCell m = Cell (fst . applyLens m) (\(s, i) -> snd (applyLens m s) i)
@@ -604,7 +642,7 @@ cellAsEval (Cell o k) s = EP (EK (o s), EE (\i -> k (s, i)))
 -- | The eval form as a cell.  Round trip:
 --
 -- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
--- >>> case evalAsCell (cellAsEval c) of Cell o k -> (o 3, k (3, 5))
+-- >>> let c' = evalAsCell (cellAsEval c) in (c'.observe 3, c'.step (3, 5))
 -- (6,8)
 evalAsCell :: (s -> Eval (Mono i o) s) -> Cell (,) s (->) i o
 evalAsCell f =
