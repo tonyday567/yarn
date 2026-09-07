@@ -25,7 +25,7 @@
 -- unfused, unpointed       Cell           Machine
 -- fused,   unpointed       Body           Body at (Dir p, Pos p) — needs no name
 -- unfused, seed as data    Process        —
--- unfused, hidden carrier  Moore          —   (not here yet)
+-- unfused, hidden carrier  Moore          —
 -- carrier in the trace     —              Closed          (not here yet)
 -- @
 --
@@ -58,7 +58,9 @@
 --   These), honest data at @(,)@, where it degenerates to a
 --   'Point'.
 -- * @Moore@ — the existential discharge: hiding the carrier is what
---   makes composition close (not in this module yet).
+--   makes composition close. The cartesian corner: unparameterised
+--   in @t@ and @arr@, so the copy and discard composition needs are
+--   free rather than dictionary-carried.
 --
 -- 'Cell' itself gets no instances: it is a data shape with conversions.
 -- The payoff is representational honesty — the fuse\/unfuse asymmetry
@@ -175,6 +177,10 @@ module Circuit.Cell
     -- * The pointed inventory
     Process (..),
     processOf,
+
+    -- * The hidden carrier
+    Moore (..),
+    asMoore,
 
     -- * Direction sources
     Cocell,
@@ -603,6 +609,64 @@ data Process t s arr a b = Process
 -- 8
 processOf :: (Category arr) => arr a (t s a) -> Cell t s arr a b -> Process t s arr a b
 processOf e (Cell o k) = Process (e .> k) (Cell o k)
+
+-- * The hidden carrier
+
+-- | The existential closure of 'Process' at the cartesian corner:
+-- @Moore a b = ∃s. Process (,) s (->) a b@. Hiding the carrier is
+-- what closes the carrier-changing operations: composition pairs the
+-- two carriers, so a composite of two processes at unknown carriers
+-- has no typeable state unless the carrier is hidden. The cost and
+-- the content of the hiding are visible in the 'Category' instance
+-- below — @inject@ uses @s1@ twice, @extract@ drops it — the copy
+-- and discard of the cartesian base, done by hand.
+--
+-- The arrow-generic version would have to carry those capabilities
+-- into the existential, @forall s. (Copy arr s, Discard arr s) =>
+-- Moore ...@, since they cannot sit on the instance head over a
+-- hidden variable. At the fixed @(,)@\/@(->)@ corner they are free,
+-- which is exactly what /cartesian corner/ means — and why the type
+-- is deliberately unparameterised in @t@ and @arr@.
+--
+-- Construction from the inventory; behavioural doctests land with
+-- the runners in the next cut step.
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> let m = asMoore p :: Moore Int Int
+-- >>> :type fmap (+1) m
+-- fmap (+1) m :: Moore Int Int
+asMoore :: Process (,) s (->) a b -> Moore a b
+asMoore = Moore
+
+-- | The composition that motivates the existential: run both
+-- machines in lockstep, the first's output feeding the second's
+-- input. The composite carrier is the pair, which is precisely the
+-- type that does not exist unless the carriers are hidden.
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> import Prelude hiding ((.))
+-- >>> import Circuit.Category ((.))
+-- >>> :type asMoore p . asMoore p
+-- asMoore p . asMoore p :: Moore Int Int
+data Moore a b = forall s. Moore (Process (,) s (->) a b)
+
+instance Functor (Moore a) where
+  fmap f (Moore (Process i (Cell o k))) = Moore (Process i (Cell (f . o) k))
+  {-# INLINEABLE fmap #-}
+
+instance Category Moore where
+  id :: Moore a a
+  id = Moore (Process id (Cell id snd))
+  {-# INLINE id #-}
+
+  (.) :: Moore b c -> Moore a b -> Moore a c
+  Moore (Process i2 (Cell o2 k2)) . Moore (Process i1 (Cell o1 k1)) =
+    Moore (Process inject (Cell extract step))
+    where
+      inject a = let s1 = i1 a in (s1, i2 (o1 s1))
+      step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
+      extract (_, s2) = o2 s2
+  {-# INLINE (.) #-}
 
 -- * Direction sources
 
