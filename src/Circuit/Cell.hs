@@ -91,6 +91,18 @@
 -- is a point paired with a read leg, @Poles ch arr a (Unit t)@ is a
 -- commit paired with a cap.
 --
+-- == Fuse is cartesian
+--
+-- 'fuse' exists only where @Unit t@ is inhabited: it must read a
+-- channel out of @t ch (Unit t)@, and at the sum tensors the payload
+-- constructor carries no channel — @Unit Either = Unit These =
+-- Void@. So a 'Cell' at a sum tensor fuses into nothing, and the
+-- honest maps there are the two non-canonical bodies the cell gives
+-- for free: @Left . step@ and @Right . observe . step@ at 'Either'
+-- (the @This@\/@That@ analogues at 'These') — one wire, one thing at
+-- a time, which is what a schedule is. Nobody should look for
+-- 'fuse' there; 'closedToGenerator' is cartesian-gated with it.
+--
 -- == Three presentations of one object
 --
 -- At the cartesian monomial corner:
@@ -186,6 +198,7 @@ module Circuit.Cell
     scanProcess,
     scan,
     fold,
+    scanThese,
 
     -- * Direction sources
     Cocell,
@@ -727,6 +740,44 @@ fold m as = case reverse (scan m as) of
   [] -> Nothing
   (b : _) -> Just b
 
+-- | The list runner at the 'These' schedule: 'These' absorbs an input
+-- and emits the post-step observation in one tick, 'That' halts on
+-- the final emission, and the generator never fires 'This' — the
+-- cartesian machine has no internal moves. Agreement with 'scan' is
+-- exact on every input, empty included:
+--
+-- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
+-- >>> scanThese p [1, 2, 3]
+-- [6,10,16]
+-- >>> scanThese p []
+-- []
+-- >>> scanThese p [1, 2] == scan (asMoore p) [1, 2]
+-- True
+--
+-- The check the cut was waiting on, answered in the negative: @[]@
+-- does /not/ come from the schedule. The generator's 'That' halt
+-- always emits its payload, so 'unfold' at 'These' never yields
+-- @[]@ — finite nonempty lists are reachable, the empty list is
+-- not, and the class haddock says "may end" on purpose. The nil
+-- case is the runner's own, the same shape as 'scanProcess': there
+-- is no state before the first input, and the tensor cannot commit
+-- for you. What 'These' buys a runner is rescheduling without
+-- emission ('This') and halt-with-payload ('That') — a schedule,
+-- not a nil.
+scanThese :: forall s a b. Process (,) s (->) a b -> [a] -> [b]
+scanThese (Process c (Cell o k)) = \case
+  [] -> []
+  (a : as) -> unfold gen (Nothing, a, as)
+  where
+    gen :: (Maybe s, a, [a]) -> These (Maybe s, a, [a]) b
+    gen (ms, a, rest) =
+      let s' = case ms of
+            Nothing -> c a
+            Just s -> k (s, a)
+       in case rest of
+            [] -> That (o s')
+            (a' : rest') -> These (Just s', a', rest') (o s')
+
 -- * Direction sources
 
 -- | A producer cell: a 'Cell' at the opposite arrow.
@@ -848,7 +899,7 @@ closedToGenerator c = unitr' .> morphism (fuse c)
 -- @
 -- Nu (,)   (->) b = [b]   — the stream
 -- Nu Either (->) b = b    — the settle
--- Nu These  (->) b = [b]  — the scheduled list, nil reachable
+-- Nu These  (->) b = [b]  — the scheduled list, may end
 -- @
 --
 -- 'Nu' at @(,)@ lands on the list deliberately: the library's stream
