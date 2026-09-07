@@ -91,17 +91,33 @@
 -- is a point paired with a read leg, @Poles ch arr a (Unit t)@ is a
 -- commit paired with a cap.
 --
--- == Fuse is cartesian
+-- == The seam is cartesian
 --
--- 'fuse' exists only where @Unit t@ is inhabited: it must read a
--- channel out of @t ch (Unit t)@, and at the sum tensors the payload
--- constructor carries no channel — @Unit Either = Unit These =
--- Void@. So a 'Cell' at a sum tensor fuses into nothing, and the
--- honest maps there are the two non-canonical bodies the cell gives
--- for free: @Left . step@ and @Right . observe . step@ at 'Either'
--- (the @This@\/@That@ analogues at 'These') — one wire, one thing at
--- a time, which is what a schedule is. Nobody should look for
--- 'fuse' there; 'closedToGenerator' is cartesian-gated with it.
+-- The library is two tribes, and 'fuse'\/'unfuse' is the map between
+-- them: the fused side — 'Body', 'Trace', 'yank', 'Net', 'Poles' —
+-- lives where the tensor carries a real unit; the unfused side —
+-- 'Cell', 'Process', 'Moore' — works at every tensor. Fusion exists
+-- only where @Unit t@ is inhabited: /fusion is where the tensor has
+-- a unit/, and the cartesian corner is where the two tribes meet.
+-- The seam read as two libraries because the map was missing, not
+-- expensive.
+--
+-- The gate is visible in 'fuse''s type: it must read a channel out of
+-- @t ch (Unit t)@, and at the sum tensors the payload constructor
+-- carries no channel — @Unit Either = Unit These = Void@. So a
+-- 'Cell' at a sum tensor fuses into nothing, and the honest maps
+-- there are the two non-canonical bodies the cell gives for free:
+-- @Left . step@ and @Right . observe . step@ at 'Either' (the
+-- @This@\/@That@ analogues at 'These') — one wire, one thing at a
+-- time, which is what a schedule is. Nobody should look for 'fuse'
+-- there; 'closedToGenerator' is cartesian-gated with it.
+--
+-- The seam is not one-directional. 'Cocell' — a 'Cell' at 'Op' — is
+-- where producers live, and 'Op' is trivial on 'Body' (a payload
+-- swap, no content): the fused side cannot express a generator.
+-- Generators, schedules, and every sum-tensor cell are unfused-only
+-- territory — the first sense in which the unfused side is the more
+-- general one.
 --
 -- == Three presentations of one object
 --
