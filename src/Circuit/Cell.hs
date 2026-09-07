@@ -89,11 +89,36 @@
 --
 -- == Direction sources
 --
--- A 'Cell' at the opposite arrow is a producer: 'step' dualises to
--- @arr ch (t ch a)@, the generalised unfold — an infinite stream at
--- @(,)@, the Elgot settle at @Either@, the cons-list shape at @These@.
--- Running is pairing a consumer cell with a producer cell over the same
--- interface.
+-- A 'Cell' at the opposite arrow is a producer — a 'Cocell':
+--
+-- @
+-- type Cocell t ch arr a b = Cell t ch (Op arr) a b
+--   observe :: Op arr ch b        =  arr b ch         -- commit leg
+--   step    :: Op arr (t ch a) ch =  arr ch (t ch a)  -- emit leg
+-- @
+--
+-- Both legs are per-tick.  The commit leg positions a channel from a
+-- payload — degenerate for a constant stream (@const ()@: positioned
+-- from nowhere), real for a resumable one (@\\n -> n@: start emitting
+-- from n).  The emit leg is the generalised unfold: an infinite stream
+-- at @(,)@, the Elgot settle at @Either@, the cons-list shape at
+-- @These@.  Neither leg says "once, at the start" — initialisation is
+-- not a leg of anything; it is a 'Point', applied to the closed cell,
+-- once, from outside.
+--
+-- 'Cocell' is a synonym, not a newtype: the field selectors are the
+-- point — @step@ on a cocell is still 'step'.  (The codata name would
+-- belong to the fixed point, @Nu t arr b@; a cocell is the generator
+-- that unfolds into it.)  The Op-side spellings stay prose —
+-- @runOp . observe@ is the commit leg, @runOp . step@ the emit leg;
+-- @commit@ is already 'Poles'' field name in this module.
+--
+-- 'pair' closes a producer and a consumer over the same interface.
+-- What it does not package is the unbounded run: that wants a
+-- generator conversion ('fuse' plus a unitor, costing copy) and an
+-- unfold-at-@(,)@ packaging — neither is here, because 'observe' and
+-- 'step' alternated by the caller already IS the run, and the
+-- packaging should arrive as packaging.
 --
 -- == Candidate replacement
 --
@@ -134,6 +159,11 @@ module Circuit.Cell
     polesOf,
     cellOf,
 
+    -- * Direction sources
+    Cocell,
+    cocell,
+    pair,
+
     -- * Lens bridge
     cellAsLens,
     lensAsCell,
@@ -145,13 +175,15 @@ module Circuit.Cell
 where
 
 import Circuit.Bimonoid (CopyT (..), Discard (..), DiscardT (..))
-import Circuit.Category (Category (..), (.>))
+import Circuit.Category (Category (..), Op (..), (.>))
 import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens)
-import Circuit.Tensor (Tensor (..), Unit, Unital (..))
+import Circuit.Tensor (Action (..), Tensor (..), Unit, Unital (..))
+import Circuit.Traced (Assoc (..))
 import Data.Kind (Type)
 import Prelude hiding (id, (.))
 
 -- $setup
+-- >>> import Circuit.Category (Op (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Pos, applyLens)
 
 -- | A stateful cell: an observation and a step, unwired.
@@ -330,6 +362,12 @@ monoMachine (Cell o k) =
 -- 'Poles' is the Adapter to 'Cell''s Lens: no @t@ parameter, because
 -- profunctor structure suffices; the tensor is needed exactly when the
 -- source must be held alongside the focus.
+--
+-- As a fact about the consumer direction, 'Poles' is 'Cell' at a
+-- channel-forgetting tensor: @commit :: arr (Const ch a) ch = arr a ch@.
+-- The producer direction dies under it — a 'Cocell' step
+-- @arr ch (Const ch a)@ returns no channel — so the fact stays a
+-- haddock line and 'Poles' stays its own type.
 data Poles ch arr a b = Poles
   { -- | Write leg: commit the payload to the channel, blind to the
     -- incoming channel.
@@ -447,6 +485,90 @@ polesOf pt (Machine c@(Cell o _)) = Poles (poke pt c) o
 cellOf :: (Tensor t arr) => Cap t arr ch -> Poles ch arr a b -> Cell t ch arr a b
 cellOf (Cap cap) (Poles w r) =
   Cell r (tensor cap id .> unitl .> w)
+
+-- * Direction sources
+
+-- | A producer cell: a 'Cell' at the opposite arrow.
+--
+-- The synonym is the point — 'step' on a cocell is still 'step'.  The
+-- emit leg @arr ch (t ch a)@ is the generalised unfold: an infinite
+-- stream at @(,)@, the Elgot settle at @Either@, the cons-list shape
+-- at @These@.  The commit leg @arr b ch@ positions a channel from a
+-- payload: degenerate for a constant stream, real for a resumable one.
+type Cocell t ch arr a b = Cell t ch (Op arr) a b
+
+-- | Build a cocell from its two legs, without the 'Op' wrappers.
+--
+-- >>> let ones = cocell (const ()) (\() -> ((), 1)) :: Cocell (,) () (->) Int ()
+-- >>> runOp (step ones) ()
+-- ((),1)
+-- >>> case ones of Cell o _ -> runOp o ()
+-- ()
+cocell :: arr b ch -> arr ch (t ch a) -> Cocell t ch arr a b
+cocell o s = Cell (Op o) (Op s)
+
+-- | Pair a producer with a consumer over the same interface: the
+-- producer's emit leg supplies the consumer's input each tick, and the
+-- producer's channel is discarded at the read leg.
+--
+-- @
+-- step:    t (t chP chC) (Unit t)
+--            --unitr------------\> t chP chC
+--            --emit g ⊗ id------\> t (t chP a) chC
+--            --assoc------------\> t chP (t a chC)
+--            --id ⊗ braid-------\> t chP (t chC a)
+--            --id ⊗ step c------\> t chP chC
+-- observe: t chP chC
+--            --cap ⊗ observe c--\> t (Unit t) b
+--            --unitl------------\> b
+-- @
+--
+-- Linear in both channels: no 'Circuit.Bimonoid.CopyT' anywhere — the
+-- only capabilities are the producer-channel discard and the tensor's
+-- symmetry (the producer's output and the consumer's channel arrive
+-- out of order after @assoc@, and 'braid' swaps them; at a
+-- non-symmetric tensor the pairing honestly refuses).  The producer's
+-- commit leg is not consumed by pairing; it is structure the type
+-- carries, available for splicing or restarting producers — 'Poles''
+-- legs are not all used by 'close' either.
+--
+-- >>> let counter = Cell id (\(ch, a) -> ch + a) :: Cell (,) Int (->) Int Int
+-- >>> let ones = cocell (const ()) (\() -> ((), 1)) :: Cocell (,) () (->) Int ()
+-- >>> let closed = pair ones counter
+-- >>> case closed of Cell o _ -> o ((), 3)
+-- 3
+-- >>> case closed of Cell _ k -> k (((), 3), ())
+-- ((),4)
+--
+-- An order-sensitive consumer pins the braid (a braid-dropped mutant
+-- would print @((),-2)@):
+--
+-- >>> let down = Cell id (\(ch, a) -> ch - a) :: Cell (,) Int (->) Int Int
+-- >>> case pair ones down of Cell _ k -> k (((), 3), ())
+-- ((),2)
+--
+-- Two ticks by hand: 'observe' and 'step' alternated by the caller is
+-- the run — pre-step readings, the ε-output included:
+--
+-- >>> let ticks c = case c of Cell o k -> let ch1 = k (((), 0), ()); ch2 = k (ch1, ()) in (o ((), 0), o ch1, o ch2)
+-- >>> ticks closed
+-- (0,1,2)
+pair ::
+  forall t chP chC arr a x b.
+  (Action t arr, Assoc t arr, DiscardT t arr chP) =>
+  Cocell t chP arr a x ->
+  Cell t chC arr a b ->
+  Cell t (t chP chC) arr (Unit t) b
+pair (Cell _ pk) (Cell o k) = Cell observeP stepP
+  where
+    observeP :: arr (t chP chC) b
+    observeP = tensor (discardT @t) o .> unitl
+    stepP :: arr (t (t chP chC) (Unit t)) (t chP chC)
+    stepP = unitr .> tensor (runOp pk) idC .> assoc .> tensor idP (braid .> k)
+    idP :: arr chP chP
+    idP = id
+    idC :: arr chC chC
+    idC = id
 
 -- | A cell is an uncurried polynomial lens: @applyLens@ shows a
 -- @Lens s s o i@ is @get :: s -> o@ plus @put :: s -> i -> s@ —
