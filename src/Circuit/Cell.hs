@@ -667,14 +667,45 @@ closedToGenerator c = unitr' .> morphism (fuse c)
 -- exactly the laziness Haskell lists already have, and 'Nu' is the
 -- type every runner's output will mention.
 --
--- The Either row is a theorem, not a coincidence: settling a
--- generator is iterating it to its 'Right', and that is 'yank' —
--- @unfold g = yank (either g g)@, the codiagonal pairing the two
--- entry points into one loop. So at 'Either', 'Unfold' adds nothing
--- beyond 'Yank', and the instance below delegates rather than
--- duplicating the loop. At @(,)@ and 'These' no such reduction
--- exists — a knot is not an iteration — so the class takes no
--- 'Yank' superclass: Either is derived, the others are not.
+-- The relationship to 'Yank' is per-tensor, and all three rows are
+-- pinned:
+--
+-- * 'Either' — interderivable: the same capability at two
+--   presentations. Forward: @unfold g = yank (either g g)@, the
+--   codiagonal pairing the two entry points. Reverse:
+--   @yank f = unfold (either (Left . Left) Right . f) . Right@ —
+--   the generator state is the yank state, and @Left . Left@ feeds
+--   a 'Left' result back in as the next state. For all @f@ both
+--   sides apply @f@ to the same sequence of states and agree on the
+--   result: induction on the number of 'Left' steps, with both
+--   sides diverging together when no 'Right' is ever produced. The
+--   doctests below witness both directions at a point; the
+--   quantified argument is two lines of prose, not an oracle.
+-- * 'These' — 'Yank' is derivable from 'Unfold', not conversely:
+--   @yank f = head . unfold g . That@ where @g@ reschedules a body
+--   'This' on the reconstructed state and maps both exit branches to
+--   a generator 'That', making the stream a singleton by
+--   construction. The converse cannot hold — a single settled value
+--   cannot carry a stream — so 'Unfold' at 'These' is the strictly
+--   stronger half, and the first 'These'-indexed capability in the
+--   library with iteration semantics. See the instance below for
+--   the witness.
+-- * @(,)@ — incomparable. The 'Yank' @(,)@ instance ties a lazy
+--   knot: self-reference, no seed, one value. 'unfold' runs a seed
+--   forward: iteration, a stream. A knot is not an iteration, and a
+--   stream is not a fixed point; neither derives from the other.
+--
+-- The class takes no 'Yank' superclass: the only row where the two
+-- coincide needs no extra structure to say so.
+--
+-- One consequence of the table, logged: @Nu (,) (->) b@ and
+-- @Nu These (->) b@ are the same type at different termination — the
+-- @(,)@ stream is always infinite, the 'These' list may end. A
+-- runner polymorphic in @t@ sees @[b]@ either way and cannot read
+-- termination off the type; the tensor's promise is discarded at
+-- the boundary. The list decision stands, but the sharpest argument
+-- for ever introducing a dedicated stream type is type-level
+-- termination, not laziness.
 class
   (Category arr) =>
   Unfold (t :: Type -> Type -> Type) (arr :: Type -> Type -> Type)
@@ -698,15 +729,21 @@ instance Unfold (,) (->) where
       go ch = case g ch of (ch', b) -> b : go ch'
 
 -- | Cocartesian: the settle. @Nu Either (->) b = b@ — the generator
--- iterates to its 'Right' and hands over the payload, so the
--- instance is the theorem: 'unfold' delegates to 'yank' through the
--- codiagonal.
+-- iterates to its 'Right' and hands over the payload. Forward half
+-- of the interderivability with 'Yank': @unfold g = yank (either g
+-- g)@, so the instance delegates to 'yank' through the codiagonal
+-- rather than duplicating the loop.
 --
 -- >>> let down n = if n <= (0 :: Int) then Right n else Left (n - 1)
 -- >>> unfold down 5
 -- 0
 -- >>> unfold down 5 == yank (either down down) 5
 -- True
+-- >>> let body n = (case either id id n of { m | m > 0 -> Left (m - 1); m -> Right m }) :: Either Int Int
+-- >>> yank body 5
+-- 0
+-- >>> (unfold (either (Left . Left) Right . body) . Right) 5
+-- 0
 instance Unfold Either (->) where
   type Nu Either (->) b = b
   unfold g = yank (either g g)
@@ -714,9 +751,21 @@ instance Unfold Either (->) where
 -- | Inclusive: the scheduled list. 'This' reschedules without
 -- emitting, 'These' is the cons cell — emit and continue — and
 -- 'That' is the nil: halt with the final payload. The list may end,
--- unlike the @(,)@ stream. ('Yank' reads a body 'These' as exit; a
--- generator reads 'These' as produce-and-reschedule — the exit
--- branch of a generator is 'That'.)
+-- unlike the @(,)@ stream. The generator reads 'These' as
+-- produce-and-reschedule, where the body of 'Yank' 'These' reads the
+-- same constructor as exit (@These _ c -> c@). The conventions
+-- differ, and the derivation shows which way the strength runs:
+-- @yank f = head . unfold g . That@ with @g@ rescheduling a body
+-- 'This' on the reconstructed state and mapping both exit branches
+-- to a generator 'That' — the settled payload is the singleton
+-- stream's head. Witnessed at a point:
+--
+-- >>> let body x = (case x of That n | n > 0 -> This (n - 1); That n -> That n; This s -> These (s + 1) (s * 10)) :: These Int Int
+-- >>> yank body (3 :: Int)
+-- 20
+-- >>> let gen x = case body x of This s -> This (This s); That c -> That c; These _ c -> That c
+-- >>> unfold gen (That 3)
+-- [20]
 --
 -- >>> let ticks ch = if ch <= (0 :: Int) then That ch else These (ch - 1) ch
 -- >>> unfold ticks 3
