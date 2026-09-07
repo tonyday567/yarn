@@ -24,7 +24,7 @@
 --                          flat (a, b)    polynomial p
 -- unfused, unpointed       Cell           Machine
 -- fused,   unpointed       Body           Body at (Dir p, Pos p) — needs no name
--- unfused, seed as data    Process        —   (not here yet)
+-- unfused, seed as data    Process        —
 -- unfused, hidden carrier  Moore          —   (not here yet)
 -- carrier in the trace     —              Closed          (not here yet)
 -- @
@@ -53,7 +53,10 @@
 -- * The run — 'closedToGenerator' (@fuse@ plus a unitor, copy-priced)
 --   and 'Unfold' (the generator settled to its behaviour): build a
 --   machine, close it against a source, take its stream finitely.
--- * @Process@ — the seed discharge (not in this module yet).
+-- * @Process@ — the three-leg inventory, carrier exposed: the
+--   commit leg is derivable where the tensor injects (Either,
+--   These), honest data at @(,)@, where it degenerates to a
+--   'Point'.
 -- * @Moore@ — the existential discharge: hiding the carrier is what
 --   makes composition close (not in this module yet).
 --
@@ -168,6 +171,10 @@ module Circuit.Cell
     poke,
     polesOf,
     cellOf,
+
+    -- * The pointed inventory
+    Process (..),
+    processOf,
 
     -- * Direction sources
     Cocell,
@@ -535,6 +542,67 @@ polesOf pt (Machine c@(Cell o _)) = Poles (poke pt c) o
 cellOf :: (Tensor t arr) => Cap t arr ch -> Poles ch arr a b -> Cell t ch arr a b
 cellOf (Cap cap) (Poles w r) =
   Cell r (tensor cap id .> unitl .> w)
+
+-- * The pointed inventory
+
+-- | The three-leg inventory, carrier exposed: a 'Cell' plus the
+-- commit leg.
+--
+-- @
+-- Process t s arr a b =
+--   ( commit :: arr a s,        -- enter from the interface, no history
+--     step    :: arr (t s a) s,  -- enter with history
+--     observe :: arr s b )       -- read out
+-- @
+--
+-- 'Poles' and 'Cell' are the two readable two-leg subsets; the
+-- fourth subset (commit and step, no observe) is a machine that
+-- cannot be read, which is why the library has three types and not
+-- four. Exposing the carrier buys the carrier-preserving
+-- operations — fmap, before, after, scan, fold — at fixed @s@; the
+-- carrier-changing ones (@\<*\>@, @.@, tensor, yank) need the
+-- carrier hidden, and live at the existential closure.
+--
+-- Whether the commit leg is /data/ or /derivable/ is a property of
+-- the tensor. Where @t@ has a right injection — Either ('Right'),
+-- These ('That') — an input with no prior state is already a case
+-- of 'step', so a separate commit value would store one fact twice
+-- with an unchecked agreement equation (the shape
+-- 'Circuit.Machine.MachineObs' exhibits). At @(,)@ no injection
+-- @arr a (t s a)@ exists — a state cannot be conjured from a
+-- payload alone — so the field is honest data, and at the unit it
+-- degenerates to a 'Point': the seed-as-data discharge. The point
+-- route of 'poke' derives commit from a 'Point' instead.
+data Process t s arr a b = Process
+  { -- | The commit leg: enter from the interface, no history.
+    commit :: arr a s,
+    -- | The underlying cell.
+    cell :: Cell t s arr a b
+  }
+
+-- | The derivation of commit where the tensor injects: the input
+-- enters through the injection and steps once. At Either the
+-- injection is 'Right' and the result satisfies @commit = step .
+-- Right@ by construction; at These it is 'That'. At @(,)@ no
+-- injection exists and 'Process' is built with the field explicit.
+--
+-- >>> let e = Cell id (\x -> case x of Left s -> s + 1; Right a -> a) :: Cell Either Int (->) Int Int
+-- >>> let p = processOf Right e :: Process Either Int (->) Int Int
+-- >>> p.commit 5
+-- 5
+-- >>> p.cell.observe 7
+-- 7
+--
+-- At @(,)@ the field is honest data — here a constant seed:
+--
+-- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
+-- >>> let p = Process (const 3) c :: Process (,) Int (->) Int Int
+-- >>> p.commit 5
+-- 3
+-- >>> p.cell.step (3, 5)
+-- 8
+processOf :: (Category arr) => arr a (t s a) -> Cell t s arr a b -> Process t s arr a b
+processOf e (Cell o k) = Process (e .> k) (Cell o k)
 
 -- * Direction sources
 
