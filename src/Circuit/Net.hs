@@ -235,6 +235,28 @@ instance (Strength t arr, Action w arr) => Strength t (SMC w arr) where
 instance (Yank t arr, Action w arr) => Yank t (SMC w arr) where
   yank body = Lift (yank (eval body))
 
+-- ** Iteration as a loop with joined wires
+
+-- The codiagonal theorem (stated and cited in "Circuit.Cell"'s
+-- 'Circuit.Cell.Unfold'): @unfold g = yank (g . plusT)@ — an iteration
+-- is a loop whose entry and feedback wires are joined. The composite
+-- needs no new syntax: the 'SigPlus' node 'Net' already has supplies the
+-- join, and the 'Circuit.Trace.SigYank' node supplies the loop. The body
+-- melts Net to a function through the 'Circuit.Bimonoid.MergeT' Either
+-- dictionary, lifts into 'Trace', and folds through 'Yank' Either —
+-- agreeing with 'Circuit.Cell.unfold' at a point:
+--
+-- >>> import Circuit.Bimonoid (SigPlus (..))
+-- >>> import Circuit.Cell (unfold)
+-- >>> import Circuit.Syntax (Syntax (..))
+-- >>> import Circuit.Traced (yank)
+-- >>> let down n = if n <= (0 :: Int) then Right n else Left (n - 1)
+-- >>> let body = Lift down . Oper (R (R (R (R (R (L SigPlus)))))) :: Net Either (->) (Either Int Int) (Either Int Int)
+-- >>> run (yank (Lift (run body)) :: Trace Either (->) Int Int) 5
+-- 0
+-- >>> unfold down 5
+-- 0
+
 -- * Net
 
 -- | The free symmetric monoidal category with a bimonoid.

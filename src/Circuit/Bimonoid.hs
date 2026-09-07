@@ -630,6 +630,20 @@ instance {-# OVERLAPPABLE #-} (Merge arr a, Tensor (,) arr) => MergeT (,) arr a 
   plusT = plus
   {-# INLINE plusT #-}
 
+-- | The coproduct's merge is free for every object — the codiagonal,
+-- uniform in a way the cartesian merge is not. This uniformity is the
+-- coproduct fact the trace-to-iteration correspondence lives on:
+-- @unfold g = yank (g . plusT)@ at 'Either', stated and cited in
+-- "Circuit.Cell"'s 'Circuit.Cell.Unfold'.
+--
+-- >>> (plusT :: Either Int Int -> Int) (Left 3)
+-- 3
+-- >>> (plusT :: Either Int Int -> Int) (Right 3)
+-- 3
+instance MergeT Either (->) a where
+  plusT = either id id
+  {-# INLINE plusT #-}
+
 -- | Every 'Zero' instance gives a 'ZeroT' instance for the cartesian tensor.
 instance {-# OVERLAPPABLE #-} (Zero arr a, Tensor (,) arr) => ZeroT (,) arr a where
   zeroT = zero
