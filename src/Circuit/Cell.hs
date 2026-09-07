@@ -740,7 +740,22 @@ closedToGenerator c = unitr' .> morphism (fuse c)
 --
 -- * 'Either' — interderivable: the same capability at two
 --   presentations. Forward: @unfold g = yank (either g g)@, the
---   codiagonal pairing the two entry points. Reverse:
+--   codiagonal pairing the two entry points. More generally
+--   @either g g = g . plusT@, so the statement worth keeping is
+--   @unfold g = yank (g . plusT)@ with @plusT :: arr (t a a) a@
+--   the tensor's merge ('MergeT'): an iteration is a loop with its
+--   entry and feedback wires joined. This is the classical
+--   trace-to-iteration correspondence on a cocartesian tensor
+--   (Hasegawa 1997, \"Recursion from cyclic sharing\", LNCS 1210;
+--   Bloom and Esik, /Iteration Theories/, 1993), and its scope is a
+--   checkable criterion rather than a case analysis: the
+--   codiagonal is free for every object exactly at the coproduct —
+--   at @(,)@ it needs a semigroup and the same term typechecks but
+--   computes the knot instead. The dictionary-free @either g g@ is
+--   what the instance uses; a class-level @yank (g . plusT)@
+--   definition would inherit the 'OVERLAPPABLE' and 'INCOHERENT'
+--   resolution of 'MergeT', so the specialised instances are the
+--   ones that run. Reverse:
 --   @yank f = unfold (either (Left . Left) Right . f) . Right@ —
 --   the generator state is the yank state, and @Left . Left@ feeds
 --   a 'Left' result back in as the next state. For all @f@ both
@@ -800,7 +815,9 @@ instance Unfold (,) (->) where
 -- iterates to its 'Right' and hands over the payload. Forward half
 -- of the interderivability with 'Yank': @unfold g = yank (either g
 -- g)@, so the instance delegates to 'yank' through the codiagonal
--- rather than duplicating the loop.
+-- rather than duplicating the loop. Equivalently @unfold g = yank (g
+-- . plusT)@ — the codiagonal is free at the coproduct ('MergeT'
+-- would be @either id id@, uniform in the object).
 --
 -- >>> let down n = if n <= (0 :: Int) then Right n else Left (n - 1)
 -- >>> unfold down 5
