@@ -212,6 +212,7 @@ module Circuit.Cell
     -- * The pointed inventory
     Process (..),
     processOf,
+    processFromSeed,
 
     -- * The hidden carrier
     Moore,
@@ -682,6 +683,17 @@ data Process t s arr a b = Process
 -- 8
 processOf :: (Category arr) => arr a (t s a) -> Cell t s arr a b -> Process t s arr a b
 processOf e (Cell o k) = Process (e .> k) (Cell o k)
+
+-- | The seed as a commit recipe: the first state is @step (s0, a)@,
+-- so the seed is never observed and no input is dropped. The naive
+-- @Process (const s0)@ is wrong on both counts — it would emit the
+-- seed reading and drop the first input.
+--
+-- >>> let c = Cell (*2) (\(s, a) -> s + a) :: Cell (,) Int (->) Int Int
+-- >>> scanProcess (processFromSeed 3 c) [5]
+-- [16]
+processFromSeed :: s -> Cell (,) s (->) a b -> Process (,) s (->) a b
+processFromSeed s0 (Cell o k) = Process (\a -> k (s0, a)) (Cell o k)
 
 -- * The hidden carrier
 
