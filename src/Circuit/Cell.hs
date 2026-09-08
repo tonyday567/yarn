@@ -217,6 +217,10 @@ module Circuit.Cell
     Moore,
     pattern Moore,
     asMoore,
+    before,
+    after,
+    delay,
+    register,
 
     -- * The runners
     scanProcess,
@@ -248,7 +252,8 @@ import Circuit.Bimonoid (CopyT (..), Discard (..), DiscardT (..))
 import Circuit.Category (Category (..), Op (..), (.>))
 import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens, monoDir, monoIn)
 import Circuit.Tensor (Action (..), Tensor (..), Unit, Unital (..))
-import Circuit.Traced (Assoc (..), Yank (..))
+import Circuit.Traced (Assoc (..), Slide (..), Strength (..), Yank (..))
+import Data.Bifunctor (Bifunctor (..))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..), toList, (<|))
 import Data.These (These (..))
@@ -759,6 +764,127 @@ instance Category Moore where
       step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
       extract (_, s2) = o2 s2
   {-# INLINE (.) #-}
+
+-- * The cartesian corner
+
+-- | Precompose a pure function before a machine: both the inject and
+-- the step see the mapped input.
+--
+-- >>> let m = Moore (const 0) (\s a -> s + a) id :: Moore Int Int
+-- >>> scan (before m (*2)) [1, 2, 3]
+-- [0,4,10]
+before :: Moore b c -> (a -> b) -> Moore a c
+before (Moore i st ex) f = Moore (i . f) (\s a -> st s (f a)) ex
+{-# INLINEABLE before #-}
+
+-- | Postcompose a pure function after a machine: the output map.
+--
+-- >>> let m = Moore (const 0) (\s a -> s + a) id :: Moore Int Int
+-- >>> scan (after m (subtract 1)) [1, 2, 3]
+-- [-1,1,4]
+after :: Moore a b -> (b -> c) -> Moore a c
+after (Moore i st ex) f = Moore i st (f . ex)
+{-# INLINEABLE after #-}
+
+-- | 'pure' produces a constant machine; '<*>' pairs the carriers and
+-- applies the left output to the right — the @liftA2@ idiom Stats.hs
+-- runs on: two machines on the same input, outputs combined pointwise.
+--
+-- >>> let ma = Moore (const 0) (\s a -> s + a) id :: Moore Int Int
+-- >>> let mb = Moore (const 1) (\s a -> s * a) id :: Moore Int Int
+-- >>> scan (liftA2 (+) ma mb) [1, 2, 3]
+-- [1,4,11]
+-- >>> scan (pure 5 :: Moore Int Int) [1, 2, 3]
+-- [5,5,5]
+instance Applicative (Moore a) where
+  pure b = Moore (const ()) (\_ _ -> ()) (const b)
+  {-# INLINEABLE pure #-}
+  Moore i1 st1 ex1 <*> Moore i2 st2 ex2 =
+    Moore
+      (\a -> (i1 a, i2 a))
+      (\(s1, s2) a -> (st1 s1 a, st2 s2 a))
+      (\(s1, s2) -> ex1 s1 (ex2 s2))
+  {-# INLINEABLE (<*>) #-}
+
+-- These instances make Moore a traced monoidal category under the
+-- cartesian tensor, ported from the incumbent
+-- "Circuit.Process" — the yank ties a lazy self-referential knot and
+-- is productive only when the body is non-strict in the feedback
+-- channel. Strict accumulators diverge under the @(,)@ yank; use
+-- 'register' for those.
+
+instance Assoc (,) Moore where
+  assoc = Moore id (\_ x -> x) (\(~((a, b), c)) -> (a, (b, c)))
+  assoc' = Moore id (\_ x -> x) (\(a, ~(b, c)) -> ((a, b), c))
+
+instance Slide (,) Moore where
+  slide = Moore id (\_ x -> x) (\(a, ~(b, c)) -> (b, (a, c)))
+
+instance Strength (,) Moore where
+  strength (Moore i st ex) =
+    Moore
+      (\(~(a, b)) -> (a, i b))
+      (\(~(_, s)) (~(a', b)) -> (a', st s b))
+      (\(~(a, s)) -> (a, ex s))
+
+instance Yank (,) Moore where
+  yank (Moore i st ex) =
+    Moore
+      (\b -> let s0 = i (a0, b); a0 = fst (ex s0) in s0)
+      ( \s b ->
+          let (s', _a) = fix (\ ~(s'', a') -> (st s (a', b), fst (ex s'')))
+           in s'
+      )
+      (snd . ex)
+    where
+      fix f = let x = f x in x
+
+instance Unital (,) Moore where
+  unitl = Moore snd (\_ (_, a) -> a) id
+  unitl' = Moore id (\_ x -> x) ((),)
+  unitr = Moore fst (\_ (a, ()) -> a) id
+  unitr' = Moore id (\_ x -> x) (,())
+
+instance Tensor (,) Moore where
+  tensor (Moore i1 st1 ex1) (Moore i2 st2 ex2) =
+    Moore
+      (bimap i1 i2)
+      (\(s1, s2) (a, c) -> (st1 s1 a, st2 s2 c))
+      (bimap ex1 ex2)
+  {-# INLINE tensor #-}
+
+instance Action (,) Moore where
+  braid = Moore id (const id) sw
+    where
+      sw (a, b) = (b, a)
+  {-# INLINE braid #-}
+
+-- | A one-tick delay: emits the seed first, then each previous input.
+--
+-- >>> scan (delay 0 :: Moore Int Int) [1, 2, 3]
+-- [0,1,2]
+delay :: s -> Moore s s
+delay s0 = Moore (\a -> (s0, a)) (\(_, prev) a -> (prev, a)) fst
+
+-- | Feedback through an explicit seed — the delay made data. The
+-- body's second output component becomes the next tick's second
+-- input component; the first is emitted.
+--
+-- Oracle — the equation free-agent pins at axioma.hs:940-942:
+-- @register@ is the cartesian trace of the body composed with a delay.
+--
+-- >>> import Prelude hiding ((.))
+-- >>> import Circuit.Category ((.))
+-- >>> import Circuit.Traced (strength)
+-- >>> import qualified Data.Tuple as Tuple
+-- >>> let body = Moore (\(x, _) -> x) (\s (x, sPrev) -> x + sPrev) (\s -> (s, s)) :: Moore (Int, Int) (Int, Int)
+-- >>> let swapP (Moore i st ex) = Moore (i . Tuple.swap) (\s -> st s . Tuple.swap) (Tuple.swap . ex)
+-- >>> scan (register 0 body) [1, 2, 3]
+-- [1,3,6]
+-- >>> scan (register 0 body) [1, 2, 3] == scan (yank (swapP (body . strength (delay 0)))) [1, 2, 3]
+-- True
+register :: s -> Moore (a, s) (b, s) -> Moore a b
+register s0 (Moore i st ex) = Moore (\a -> i (a, s0)) (\s a -> st s (a, snd (ex s))) (fst . ex)
 
 -- * The runners
 
