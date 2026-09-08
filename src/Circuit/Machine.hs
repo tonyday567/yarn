@@ -119,6 +119,8 @@ import Circuit.Poly
     Netlist,
     Poly (..),
     Pos,
+    monoDir,
+    monoIn,
     nestedToComp,
     runMorphism,
   )
@@ -198,15 +200,6 @@ machine = Machine . Body
 -- | Inspect a cartesian 'Machine' as its underlying arrow.
 machineMorphism :: Machine (,) s arr p -> arr (s, Dir p) (s, Pos p)
 machineMorphism (Machine (Body f)) = f
-
--- | Extract the monomial direction from its 'Either Void' encoding.
-monoDir :: Dir (Mono i o) -> i
-monoDir (Right i) = i
-monoDir (Left v) = absurd v
-
--- | Inject a monomial direction into its 'Either Void' encoding.
-monoIn :: i -> Dir (Mono i o)
-monoIn = Right
 
 -- | Convert an eval-form @(->)@ machine into the arrow form.
 --

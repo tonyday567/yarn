@@ -85,6 +85,8 @@ module Circuit.Poly
 
     -- * Lenses
     Mono,
+    monoIn,
+    monoDir,
     Lens,
     lens,
     dagger,
@@ -669,6 +671,26 @@ runMorphism = \case
 
 -- | The monomial interface: @i@ directions (input), @o@ positions (output).
 type Mono i o = 'Prod ('Const o) ('Exp i)
+
+-- | Inject a monomial direction into its 'Either Void' encoding.
+--
+-- The canonical isomorphism @i ≅ Dir (Mono i o)@, stated as a pair of
+-- one-liners so that runners and hand-stepping consumers do not re-derive
+-- the 'Either Void' encoding.  The 'Void' elimination is 'absurd' — the
+-- 'Left' case cannot occur.
+--
+-- >>> monoIn 5 :: Dir (Mono Int Bool)
+-- Right 5
+monoIn :: i -> Dir (Mono i o)
+monoIn = Right
+
+-- | Extract the monomial direction from its 'Either Void' encoding.
+--
+-- >>> monoDir (monoIn 5 :: Dir (Mono Int Bool)) :: Int
+-- 5
+monoDir :: Dir (Mono i o) -> i
+monoDir (Right i) = i
+monoDir (Left v) = absurd v
 
 -- | A polynomial lens @Lens s t a b@: source position @s@, source direction @t@,
 -- target position @a@, target direction @b@.

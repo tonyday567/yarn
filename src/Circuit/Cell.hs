@@ -23,7 +23,7 @@
 -- @
 --                          flat (a, b)    polynomial p
 -- unfused, unpointed       Cell           Machine
--- fused,   unpointed       Body           Body at (Dir p, Pos p) — needs no name
+-- fused,   unpointed       Body           MonoBody; Body at (Dir p, Pos p)
 -- unfused, seed as data    Process        —
 -- unfused, hidden carrier  Moore          —
 -- carrier in the trace     —              Closed          (not here yet)
@@ -178,6 +178,11 @@ module Circuit.Cell
 
     -- * The fused span
     Body (..),
+    MonoBody,
+
+    -- * The monomial interface
+    monoIn,
+    monoDir,
 
     -- * Wiring moves
     fuse,
@@ -238,12 +243,13 @@ where
 
 import Circuit.Bimonoid (CopyT (..), Discard (..), DiscardT (..))
 import Circuit.Category (Category (..), Op (..), (.>))
-import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens)
+import Circuit.Poly (Dir, Eval (..), Lens, Mono, Poly, Pos, applyLens, lens, monoDir, monoIn)
 import Circuit.Tensor (Action (..), Tensor (..), Unit, Unital (..))
 import Circuit.Traced (Assoc (..), Yank (..))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..), toList, (<|))
 import Data.These (These (..))
+import Data.Void (Void)
 import Prelude hiding (id, (.))
 
 -- $setup
@@ -378,6 +384,28 @@ unfuse (Body f) = Cell projSnd (tensor projFst id .> f)
     projFst = unitr . tensor id discard
     projSnd :: arr (s, b) b
     projSnd = unitl . tensor discard id
+
+-- | The fused grade at a monomial interface: @i@ directions, @o@
+-- positions, state threaded in the arrow.
+--
+-- This is the row the grid left unnamed — 'Body' at @'Dir' ('Mono' i
+-- o)@ and @'Pos' ('Mono' i o)@ — and the fleet's fused-tribe
+-- consumers build and hand-run nothing else: an arrow
+-- @arr (s, 'Either' Void i) (s, (o, ()))@, stepped manually at
+-- directions from 'monoIn', read at directions from 'monoDir', over
+-- bases (like @Prob@) where 'fuse' does not reach. A plain synonym,
+-- base-polymorphic: nothing here needs a unit, a copy, or a @(->)@.
+--
+-- Unlike 'Cell', the observation is not forced to ignore the input —
+-- the emit leg computes from the same arrow as the step, so the
+-- Moore/Mealy choice is the builder's per construction. That freedom
+-- is the row's content; 'Cell' is the same grade with the choice
+-- fixed.
+--
+-- >>> let b = Body (\(s, Right i) -> (s + i, (s, ()))) :: MonoBody (,) Int (->) Int Int
+-- >>> b.morphism (3, monoIn 5)
+-- (8,(3,()))
+type MonoBody t s arr i o = Body t s arr (Either Void i) (o, ())
 
 -- | A cell at a polynomial interface @p@: the flat channels become
 -- @'Dir' p@ and @'Pos' p@.
@@ -648,14 +676,20 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 
 -- * The hidden carrier
 
--- | The existential closure of 'Process' at the cartesian corner:
--- @Moore a b = ∃s. Process (,) s (->) a b@. Hiding the carrier is
--- what closes the carrier-changing operations: composition pairs the
--- two carriers, so a composite of two processes at unknown carriers
--- has no typeable state unless the carrier is hidden. The cost and
--- the content of the hiding are visible in the 'Category' instance
--- below — @inject@ uses @s1@ twice, @extract@ drops it — the copy
--- and discard of the cartesian base, done by hand.
+-- | The existential closure of 'Process' at the cartesian corner —
+-- @Moore a b ≅ ∃s. Process (,) s (->) a b@, stored at the fleet's
+-- three-function spelling. Hiding the carrier is what closes the
+-- carrier-changing operations: composition pairs the two carriers, so
+-- a composite of two processes at unknown carriers has no typeable
+-- state unless the carrier is hidden. The cost and the content of the
+-- hiding are visible in the 'Category' instance below — @inject@ uses
+-- @s1@ twice, @extract@ drops it — the copy and discard of the
+-- cartesian base, done by hand.
+--
+-- The spelling is the incumbent's: @Moore i st ex@ is inject, step,
+-- extract — the order the fleet has always written it, step curried.
+-- The carrier stays existential; the bridge from the two-leg
+-- inventory is 'asMoore'.
 --
 -- The arrow-generic version would have to carry those capabilities
 -- into the existential, @forall s. (Copy arr s, Discard arr s) =>
@@ -664,15 +698,19 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 -- which is exactly what /cartesian corner/ means — and why the type
 -- is deliberately unparameterised in @t@ and @arr@.
 --
--- Construction from the inventory; behavioural doctests land with
--- the runners in the next cut step.
+-- >>> let m = Moore (const 3) (\s a -> s + a) (*2) :: Moore Int Int
+-- >>> scan m [1, 2, 3]
+-- [6,10,16]
+data Moore a b = forall s. Moore (a -> s) (s -> a -> s) (s -> b)
+
+-- | Construction from the inventory.
 --
 -- >>> let p = Process (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Process (,) Int (->) Int Int
 -- >>> let m = asMoore p :: Moore Int Int
 -- >>> :type fmap (+1) m
 -- fmap (+1) m :: Moore Int Int
 asMoore :: Process (,) s (->) a b -> Moore a b
-asMoore = Moore
+asMoore (Process i (Cell o k)) = Moore i (curry k) o
 
 -- | The composition that motivates the existential: run both
 -- machines in lockstep, the first's output feeding the second's
@@ -684,24 +722,21 @@ asMoore = Moore
 -- >>> import Circuit.Category ((.))
 -- >>> :type asMoore p . asMoore p
 -- asMoore p . asMoore p :: Moore Int Int
-data Moore a b = forall s. Moore (Process (,) s (->) a b)
-
 instance Functor (Moore a) where
-  fmap f (Moore (Process i (Cell o k))) = Moore (Process i (Cell (f . o) k))
+  fmap f (Moore i st ex) = Moore i st (f . ex)
   {-# INLINEABLE fmap #-}
 
 instance Category Moore where
   id :: Moore a a
-  id = Moore (Process id (Cell id snd))
+  id = Moore id (\_ x -> x) id
   {-# INLINE id #-}
 
   (.) :: Moore b c -> Moore a b -> Moore a c
-  Moore (Process i2 (Cell o2 k2)) . Moore (Process i1 (Cell o1 k1)) =
-    Moore (Process inject (Cell extract step))
+  Moore i2 st2 ex2 . Moore i1 st1 ex1 = Moore inject step extract
     where
-      inject a = let s1 = i1 a in (s1, i2 (o1 s1))
-      step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
-      extract (_, s2) = o2 s2
+      inject a = let s1 = i1 a in (s1, i2 (ex1 s1))
+      step (s1, s2) a = let s1' = st1 s1 a in (s1', st2 s2 (ex1 s1'))
+      extract (_, s2) = ex2 s2
   {-# INLINE (.) #-}
 
 -- * The runners
@@ -738,7 +773,7 @@ scanProcess (Process c (Cell o k)) = \case
 -- >>> scan (asMoore p) []
 -- []
 scan :: Moore a b -> [a] -> [b]
-scan (Moore p) = scanProcess p
+scan (Moore i st ex) = scanProcess (Process i (Cell ex (uncurry st)))
 
 -- | The settled value: the last observation of the run. The 'Maybe'
 -- is the input list's emptiness — @last@'s 'Maybe', imported from
@@ -762,7 +797,7 @@ scan (Moore p) = scanProcess p
 -- >>> fold m [1, 2, 3] == (case reverse (scan m [1, 2, 3]) of { [] -> Nothing; (b : _) -> Just b })
 -- True
 fold :: Moore a b -> [a] -> Maybe b
-fold (Moore p) = foldProcess p
+fold (Moore i st ex) = foldProcess (Process i (Cell ex (uncurry st)))
 
 -- | The direct loop behind 'fold': state in, one observation held at
 -- a time. Agrees with 'scan' by the law witnessed there.
