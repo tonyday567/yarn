@@ -677,19 +677,19 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 -- * The hidden carrier
 
 -- | The existential closure of 'Process' at the cartesian corner —
--- @Moore a b ≅ ∃s. Process (,) s (->) a b@, stored at the fleet's
--- three-function spelling. Hiding the carrier is what closes the
--- carrier-changing operations: composition pairs the two carriers, so
--- a composite of two processes at unknown carriers has no typeable
--- state unless the carrier is hidden. The cost and the content of the
--- hiding are visible in the 'Category' instance below — @inject@ uses
--- @s1@ twice, @extract@ drops it — the copy and discard of the
--- cartesian base, done by hand.
+-- @Moore a b = ∃s. (a -> s) × Cell (,) s (->) a b@ — the cartesian
+-- specialization of 'Cell', carrier hidden. Hiding the carrier is
+-- what closes the carrier-changing operations: composition pairs the
+-- two carriers, so a composite of two processes at unknown carriers
+-- has no typeable state unless the carrier is hidden. The cost and
+-- the content of the hiding are visible in the 'Category' instance
+-- below — @inject@ uses @s1@ twice, @extract@ drops it — the copy
+-- and discard of the cartesian base, done by hand.
 --
--- The spelling is the incumbent's: @Moore i st ex@ is inject, step,
--- extract — the order the fleet has always written it, step curried.
--- The carrier stays existential; the bridge from the two-leg
--- inventory is 'asMoore'.
+-- The specialization is stored uncurried, as the 'Cell' it is: the
+-- fleet's curried step @s -> a -> s@ is the same function after
+-- 'uncurry', and the curry belongs at the fleet boundary, not in the
+-- library's type.
 --
 -- The arrow-generic version would have to carry those capabilities
 -- into the existential, @forall s. (Copy arr s, Discard arr s) =>
@@ -698,10 +698,10 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 -- which is exactly what /cartesian corner/ means — and why the type
 -- is deliberately unparameterised in @t@ and @arr@.
 --
--- >>> let m = Moore (const 3) (\s a -> s + a) (*2) :: Moore Int Int
+-- >>> let m = Moore (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Moore Int Int
 -- >>> scan m [1, 2, 3]
 -- [6,10,16]
-data Moore a b = forall s. Moore (a -> s) (s -> a -> s) (s -> b)
+data Moore a b = forall s. Moore (a -> s) (Cell (,) s (->) a b)
 
 -- | Construction from the inventory.
 --
@@ -710,7 +710,7 @@ data Moore a b = forall s. Moore (a -> s) (s -> a -> s) (s -> b)
 -- >>> :type fmap (+1) m
 -- fmap (+1) m :: Moore Int Int
 asMoore :: Process (,) s (->) a b -> Moore a b
-asMoore (Process i (Cell o k)) = Moore i (curry k) o
+asMoore (Process i c) = Moore i c
 
 -- | The composition that motivates the existential: run both
 -- machines in lockstep, the first's output feeding the second's
@@ -723,20 +723,21 @@ asMoore (Process i (Cell o k)) = Moore i (curry k) o
 -- >>> :type asMoore p . asMoore p
 -- asMoore p . asMoore p :: Moore Int Int
 instance Functor (Moore a) where
-  fmap f (Moore i st ex) = Moore i st (f . ex)
+  fmap f (Moore i (Cell o k)) = Moore i (Cell (f . o) k)
   {-# INLINEABLE fmap #-}
 
 instance Category Moore where
   id :: Moore a a
-  id = Moore id (\_ x -> x) id
+  id = Moore id (Cell id snd)
   {-# INLINE id #-}
 
   (.) :: Moore b c -> Moore a b -> Moore a c
-  Moore i2 st2 ex2 . Moore i1 st1 ex1 = Moore inject step extract
+  Moore i2 (Cell o2 k2) . Moore i1 (Cell o1 k1) =
+    Moore inject (Cell extract step)
     where
-      inject a = let s1 = i1 a in (s1, i2 (ex1 s1))
-      step (s1, s2) a = let s1' = st1 s1 a in (s1', st2 s2 (ex1 s1'))
-      extract (_, s2) = ex2 s2
+      inject a = let s1 = i1 a in (s1, i2 (o1 s1))
+      step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
+      extract (_, s2) = o2 s2
   {-# INLINE (.) #-}
 
 -- * The runners
@@ -773,7 +774,7 @@ scanProcess (Process c (Cell o k)) = \case
 -- >>> scan (asMoore p) []
 -- []
 scan :: Moore a b -> [a] -> [b]
-scan (Moore i st ex) = scanProcess (Process i (Cell ex (uncurry st)))
+scan (Moore i c) = scanProcess (Process i c)
 
 -- | The settled value: the last observation of the run. The 'Maybe'
 -- is the input list's emptiness — @last@'s 'Maybe', imported from
@@ -797,7 +798,7 @@ scan (Moore i st ex) = scanProcess (Process i (Cell ex (uncurry st)))
 -- >>> fold m [1, 2, 3] == (case reverse (scan m [1, 2, 3]) of { [] -> Nothing; (b : _) -> Just b })
 -- True
 fold :: Moore a b -> [a] -> Maybe b
-fold (Moore i st ex) = foldProcess (Process i (Cell ex (uncurry st)))
+fold (Moore i c) = foldProcess (Process i c)
 
 -- | The direct loop behind 'fold': state in, one observation held at
 -- a time. Agrees with 'scan' by the law witnessed there.
