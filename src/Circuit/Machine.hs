@@ -112,8 +112,7 @@ import Circuit.Category ((.))
 import Circuit.Container (Located (..), SomePos (..), posAt, posOf)
 import Circuit.Equip (Poles (..))
 import Circuit.Poly
-  ( Coalgebra (..),
-    Dir,
+  ( Dir,
     Eval (..),
     Mono,
     Morphism (..),
@@ -487,6 +486,17 @@ runMachineSumHet ::
 runMachineSumHet sys s = case toEvalMachine sys s of
   ES (Left (EP (EK o, EE f))) -> SumStepL o f
   ES (Right (EP (EK o, EE f))) -> SumStepR o f
+
+-- | Spivak's @[p,q]@-coalgebra. State @s@ is runtime, not a type index.
+--
+-- * 'act' gives the wiring pattern as a polynomial morphism.
+-- * 'upd' takes a state and an input observation in @p@ and returns an output
+--   observation in @q@, i.e. an 'Eval' pairing the presented position with its
+--   own direction consumer.
+data Coalgebra s p q = Coalgebra
+  { act :: s -> Morphism p q,
+    upd :: s -> Eval p s -> Eval q s
+  }
 
 -- | Run a @Coalgebra s 'Y q@ as an observable 'Machine' over @q@.
 --

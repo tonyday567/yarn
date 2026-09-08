@@ -83,9 +83,6 @@ module Circuit.Poly
     Morphism (..),
     runMorphism,
 
-    -- * Coalgebras
-    Coalgebra (..),
-
     -- * Lenses
     Mono,
     monoIn,
@@ -584,23 +581,6 @@ runMorphism = \case
     EP (EK s, EE k) -> case match s of
       Left a -> ES (Left (EP (EK a, EE (k . build))))
       Right s' -> ES (Right (EP (EK s', EE k)))
-
--- | Spivak's @[p,q]@-coalgebra. State @s@ is runtime, not a type index.
---
--- * 'act' gives the wiring pattern as a polynomial morphism.
--- * 'upd' takes a state and an input observation in @p@ and returns an
---   output observation in @q@, i.e. an 'Eval' pairing the presented
---   position with its own direction consumer.
---
--- At a monomial interface, 'upd' is a step whose output may read the
--- input — the polynomial-graded form of the observation-reads-input
--- row. Pure polynomial content: no arrow, no tensor; the machine-level
--- combinators ("Circuit.Machine.coalgebraToMachine",
--- "Circuit.Machine.machineToCoalgebraMono") build on this type.
-data Coalgebra s p q = Coalgebra
-  { act :: s -> Morphism p q,
-    upd :: s -> Eval p s -> Eval q s
-  }
 
 -- $dirichlet-tensor
 --
