@@ -1,7 +1,9 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | A state machine as two unwired legs — an observation and a step —
 -- and the grid of types around it.
@@ -212,7 +214,8 @@ module Circuit.Cell
     processOf,
 
     -- * The hidden carrier
-    Moore (..),
+    Moore,
+    pattern Moore,
     asMoore,
 
     -- * The runners
@@ -254,6 +257,7 @@ import Prelude hiding (id, (.))
 
 -- $setup
 -- >>> :set -XOverloadedRecordDot
+-- >>> :set -XPatternSynonyms
 -- >>> import Circuit.Category (Op (..))
 -- >>> import Circuit.Poly (Dir, Eval (..), Mono, Pos, applyLens)
 -- >>> import Circuit.Traced (yank)
@@ -676,20 +680,20 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 
 -- * The hidden carrier
 
--- | The existential closure of 'Process' at the cartesian corner —
--- @Moore a b = ∃s. (a -> s) × Cell (,) s (->) a b@ — the cartesian
--- specialization of 'Cell', carrier hidden. Hiding the carrier is
--- what closes the carrier-changing operations: composition pairs the
--- two carriers, so a composite of two processes at unknown carriers
--- has no typeable state unless the carrier is hidden. The cost and
--- the content of the hiding are visible in the 'Category' instance
--- below — @inject@ uses @s1@ twice, @extract@ drops it — the copy
--- and discard of the cartesian base, done by hand.
+-- | The existential closure of 'Process' at the cartesian corner:
+-- @Moore a b = ∃s. Process (,) s (->) a b@, carrier hidden — the
+-- cartesian specialization of 'Process'. Hiding the carrier is what
+-- closes the carrier-changing operations: composition pairs the two
+-- carriers, so a composite of two processes at unknown carriers has
+-- no typeable state unless the carrier is hidden. The cost and the
+-- content of the hiding are visible in the 'Category' instance below
+-- — @inject@ uses @s1@ twice, @extract@ drops it — the copy and
+-- discard of the cartesian base, done by hand.
 --
--- The specialization is stored uncurried, as the 'Cell' it is: the
--- fleet's curried step @s -> a -> s@ is the same function after
--- 'uncurry', and the curry belongs at the fleet boundary, not in the
--- library's type.
+-- Stored as the legs are stored — commit, then the 'Cell' — with the
+-- fleet's curried spelling on the surface as the 'Moore' pattern:
+-- the matcher curries the step on the way out, the builder uncurries
+-- on the way in, and the storage never curries.
 --
 -- The arrow-generic version would have to carry those capabilities
 -- into the existential, @forall s. (Copy arr s, Discard arr s) =>
@@ -698,10 +702,26 @@ processOf e (Cell o k) = Process (e .> k) (Cell o k)
 -- which is exactly what /cartesian corner/ means — and why the type
 -- is deliberately unparameterised in @t@ and @arr@.
 --
--- >>> let m = Moore (const 3) (Cell (*2) (\(s, a) -> s + a)) :: Moore Int Int
+-- >>> let m = Moore (const 3) (\s a -> s + a) (*2) :: Moore Int Int
 -- >>> scan m [1, 2, 3]
 -- [6,10,16]
-data Moore a b = forall s. Moore (a -> s) (Cell (,) s (->) a b)
+-- >>> case asMoore (Process (const 3) (Cell (*2) (\(s, a) -> s + a))) of Moore i st ex -> ex (st (i 0) 2)
+-- 10
+data Moore a b = forall s. Moore_ (a -> s) (Cell (,) s (->) a b)
+
+-- | The three-function spelling, curried both ways: @Moore i st ex@
+-- is inject, step, extract — construction and deconstruction at the
+-- fleet's surface, storage untouched.
+pattern Moore ::
+  (a -> s) ->
+  (s -> a -> s) ->
+  (s -> b) ->
+  Moore a b
+pattern Moore i st ex <- Moore_ i (Cell ex (curry -> st))
+  where
+    Moore i st ex = Moore_ i (Cell ex (uncurry st))
+
+{-# COMPLETE Moore #-}
 
 -- | Construction from the inventory.
 --
@@ -710,7 +730,7 @@ data Moore a b = forall s. Moore (a -> s) (Cell (,) s (->) a b)
 -- >>> :type fmap (+1) m
 -- fmap (+1) m :: Moore Int Int
 asMoore :: Process (,) s (->) a b -> Moore a b
-asMoore (Process i c) = Moore i c
+asMoore (Process i c) = Moore_ i c
 
 -- | The composition that motivates the existential: run both
 -- machines in lockstep, the first's output feeding the second's
@@ -723,17 +743,17 @@ asMoore (Process i c) = Moore i c
 -- >>> :type asMoore p . asMoore p
 -- asMoore p . asMoore p :: Moore Int Int
 instance Functor (Moore a) where
-  fmap f (Moore i (Cell o k)) = Moore i (Cell (f . o) k)
+  fmap f (Moore_ i (Cell o k)) = Moore_ i (Cell (f . o) k)
   {-# INLINEABLE fmap #-}
 
 instance Category Moore where
   id :: Moore a a
-  id = Moore id (Cell id snd)
+  id = Moore_ id (Cell id snd)
   {-# INLINE id #-}
 
   (.) :: Moore b c -> Moore a b -> Moore a c
-  Moore i2 (Cell o2 k2) . Moore i1 (Cell o1 k1) =
-    Moore inject (Cell extract step)
+  Moore_ i2 (Cell o2 k2) . Moore_ i1 (Cell o1 k1) =
+    Moore_ inject (Cell extract step)
     where
       inject a = let s1 = i1 a in (s1, i2 (o1 s1))
       step ((s1, s2), a) = let s1' = k1 (s1, a) in (s1', k2 (s2, o1 s1'))
@@ -774,7 +794,7 @@ scanProcess (Process c (Cell o k)) = \case
 -- >>> scan (asMoore p) []
 -- []
 scan :: Moore a b -> [a] -> [b]
-scan (Moore i c) = scanProcess (Process i c)
+scan (Moore_ i c) = scanProcess (Process i c)
 
 -- | The settled value: the last observation of the run. The 'Maybe'
 -- is the input list's emptiness — @last@'s 'Maybe', imported from
@@ -798,7 +818,7 @@ scan (Moore i c) = scanProcess (Process i c)
 -- >>> fold m [1, 2, 3] == (case reverse (scan m [1, 2, 3]) of { [] -> Nothing; (b : _) -> Just b })
 -- True
 fold :: Moore a b -> [a] -> Maybe b
-fold (Moore i c) = foldProcess (Process i c)
+fold (Moore_ i c) = foldProcess (Process i c)
 
 -- | The direct loop behind 'fold': state in, one observation held at
 -- a time. Agrees with 'scan' by the law witnessed there.
